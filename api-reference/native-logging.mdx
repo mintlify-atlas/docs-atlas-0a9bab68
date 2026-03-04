@@ -276,7 +276,68 @@ const subscription = addNativeLogListener((level, text) => {
 
 ---
 
+## Constants
+
+### libVersion
+
+The current version of the whisper.cpp library.
+
+```typescript
+import { libVersion } from 'whisper.rn'
+
+console.log('whisper.cpp version:', libVersion)
+```
+
+<ResponseField name="libVersion" type="string">
+  The whisper.cpp library version string
+</ResponseField>
+
+---
+
+### isUseCoreML
+
+Boolean indicating whether Core ML models are being used on iOS.
+
+```typescript
+import { isUseCoreML } from 'whisper.rn'
+
+if (isUseCoreML) {
+  console.log('Core ML is enabled')
+}
+```
+
+<ResponseField name="isUseCoreML" type="boolean">
+  `true` if Core ML models are configured and available, `false` otherwise
+</ResponseField>
+
+<Note>
+  This constant is determined at build time based on the native configuration.
+</Note>
+
+---
+
+### isCoreMLAllowFallback
+
+Boolean indicating whether fallback to CPU is allowed if Core ML model loading fails.
+
+```typescript
+import { isCoreMLAllowFallback } from 'whisper.rn'
+
+console.log('Core ML fallback allowed:', isCoreMLAllowFallback)
+```
+
+<ResponseField name="isCoreMLAllowFallback" type="boolean">
+  `true` if fallback to CPU is allowed when Core ML fails, `false` otherwise
+</ResponseField>
+
+<Note>
+  This constant is determined at build time based on the native configuration.
+</Note>
+
+---
+
 ## See Also
 
 - [initWhisper()](/api-reference/init-whisper) - Initialize Whisper context
 - [initWhisperVad()](/api-reference/init-whisper-vad) - Initialize VAD context
+- [Core ML Acceleration](/features/coreml-acceleration) - Setting up Core ML on iOS
