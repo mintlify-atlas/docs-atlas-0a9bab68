@@ -1,0 +1,153 @@
+{
+  "projectType": "sdk-library",
+  "projectName": "whisper.rn",
+  "projectDescription": "React Native binding of whisper.cpp for high-performance speech recognition on iOS and Android",
+  "theme": "palm",
+  "primaryColor": "#10a37f",
+  "lightColor": null,
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "core-concepts/contexts",
+              "core-concepts/audio-formats",
+              "core-concepts/models",
+              "core-concepts/performance"
+            ]
+          },
+          {
+            "group": "Features",
+            "pages": [
+              "features/transcription",
+              "features/voice-activity-detection",
+              "features/realtime-transcription",
+              "features/coreml-acceleration"
+            ]
+          },
+          {
+            "group": "Platform Guides",
+            "pages": [
+              "platform-guides/ios",
+              "platform-guides/android",
+              "platform-guides/expo"
+            ]
+          },
+          {
+            "group": "Examples",
+            "pages": [
+              "examples/basic-transcription",
+              "examples/vad-detection",
+              "examples/realtime-streaming",
+              "examples/file-handling"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
+              "advanced/custom-audio-adapters",
+              "advanced/memory-management",
+              "advanced/audio-session-ios",
+              "advanced/optimization"
+            ]
+          },
+          {
+            "group": "Resources",
+            "pages": [
+              "resources/troubleshooting",
+              "resources/tips-and-tricks",
+              "resources/migration-guide",
+              "resources/contributing"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Core API",
+            "pages": [
+              "api-reference/init-whisper",
+              "api-reference/whisper-context",
+              "api-reference/release-functions"
+            ]
+          },
+          {
+            "group": "Voice Activity Detection",
+            "pages": [
+              "api-reference/init-whisper-vad",
+              "api-reference/whisper-vad-context",
+              "api-reference/vad-options"
+            ]
+          },
+          {
+            "group": "Realtime Transcription",
+            "pages": [
+              "api-reference/realtime-transcriber",
+              "api-reference/slice-manager",
+              "api-reference/audio-stream-interface"
+            ]
+          },
+          {
+            "group": "Types & Interfaces",
+            "pages": [
+              "api-reference/types/transcribe-options",
+              "api-reference/types/transcribe-result",
+              "api-reference/types/context-options",
+              "api-reference/types/audio-session-ios"
+            ]
+          },
+          {
+            "group": "Utilities",
+            "pages": [
+              "api-reference/audio-session-ios",
+              "api-reference/native-logging"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Speech-to-text transcription using OpenAI's Whisper model",
+    "Voice Activity Detection with Silero VAD model",
+    "Realtime transcription with auto-slicing and memory management",
+    "Core ML acceleration for iOS",
+    "Metal/GPU acceleration support",
+    "JSI bindings for high-performance audio processing",
+    "Support for multiple audio formats and sources",
+    "Cross-platform (iOS, Android, tvOS)"
+  ],
+  "publicApiSurface": [
+    "initWhisper(options): Promise<WhisperContext>",
+    "WhisperContext.transcribe(file, options)",
+    "WhisperContext.transcribeData(data, options)",
+    "WhisperContext.transcribeRealtime(options)",
+    "WhisperContext.bench(maxThreads)",
+    "WhisperContext.release()",
+    "initWhisperVad(options): Promise<WhisperVadContext>",
+    "WhisperVadContext.detectSpeech(file, options)",
+    "WhisperVadContext.detectSpeechData(data, options)",
+    "WhisperVadContext.release()",
+    "RealtimeTranscriber - Modern realtime transcription",
+    "SliceManager - Audio slice management",
+    "AudioSessionIos - iOS audio session utilities",
+    "releaseAllWhisper() - Release all contexts",
+    "releaseAllWhisperVad() - Release all VAD contexts",
+    "toggleNativeLog(enabled) - Control native logging",
+    "addNativeLogListener(listener) - Listen to native logs"
+  ]
+}
