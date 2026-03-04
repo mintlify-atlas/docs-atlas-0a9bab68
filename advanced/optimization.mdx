@@ -1,0 +1,619 @@
+---
+title: "Performance Optimization"
+description: "Tune transcription performance, threading, and GPU acceleration"
+icon: "gauge-high"
+---
+
+## Overview
+
+Optimizing whisper.rn involves balancing accuracy, speed, and resource usage. This guide covers model selection, threading configuration, GPU acceleration, and platform-specific optimizations.
+
+## Model Selection
+
+The most impactful optimization is choosing the right model size.
+
+### Model Comparison
+
+| Model | Size | Speed | Accuracy | RAM Usage | Best For |
+|-------|------|-------|----------|-----------|----------|
+| **tiny.en** | 75 MB | Fastest | Good | ~100 MB | Live transcription, quick results |
+| **tiny** | 75 MB | Fastest | Good | ~100 MB | Multi-language, real-time |
+| **base.en** | 142 MB | Fast | Better | ~150 MB | Balanced performance |
+| **base** | 142 MB | Fast | Better | ~150 MB | Multi-language, balanced |
+| **small.en** | 466 MB | Medium | Great | ~500 MB | High accuracy needed |
+| **small** | 466 MB | Medium | Great | ~500 MB | Multi-language, accurate |
+| **medium.en** | 1.5 GB | Slow | Excellent | ~1.8 GB | Offline processing |
+| **large** | 3 GB | Slowest | Best | ~3.5 GB | Maximum accuracy (not recommended mobile) |
+
+### Quantized Models
+
+Quantized models reduce size and improve speed with minimal accuracy loss.
+
+```
+tiny.en-q8.bin     - 8-bit quantized (recommended)
+base.en-q5.bin     - 5-bit quantized (more aggressive)
+small.en-q8.bin    - 8-bit quantized
+```
+
+**Recommendations**:
+- **Mobile realtime**: `tiny.en` or `tiny.en-q8`
+- **Mobile batch**: `base.en` or `base.en-q8`
+- **High accuracy**: `small.en` or `small.en-q8`
+- **Avoid on mobile**: `medium`, `large` (too slow, memory intensive)
+
+## Threading Configuration
+
+### maxThreads
+
+Controls CPU parallelization for transcription.
+
+```typescript NativeRNWhisper.ts
+type TranscribeOptions = {
+  maxThreads?: number  // Default: 2 for 4-core, 4 for 6+ core devices
+  // ...
+}
+```
+
+<ParamField path="maxThreads" type="number">
+  Number of CPU threads to use during computation
+  
+  **Default**: Automatically detected
+  - 2 threads for 4-core devices
+  - 4 threads for 6+ core devices
+  
+  **Range**: 1-8 (device-dependent)
+</ParamField>
+
+### Finding Optimal Thread Count
+
+Use the `bench()` method to test different thread counts:
+
+```typescript
+const whisperContext = await initWhisper({ filePath: modelPath })
+
+// Test with different thread counts
+for (let threads = 1; threads <= 8; threads++) {
+  const result = await whisperContext.bench(threads)
+  console.log(`Threads: ${threads}`)
+  console.log(`Encode: ${result.encodeMs}ms`)
+  console.log(`Decode: ${result.decodeMs}ms`)
+  console.log(`Total: ${result.encodeMs + result.decodeMs}ms`)
+  console.log('---')
+}
+```
+
+<ResponseField name="BenchResult" type="object">
+  <Expandable title="properties">
+    <ResponseField name="config" type="string">
+      Model configuration string
+    </ResponseField>
+    
+    <ResponseField name="nThreads" type="number">
+      Number of threads used
+    </ResponseField>
+    
+    <ResponseField name="encodeMs" type="number">
+      Encoder processing time (milliseconds)
+    </ResponseField>
+    
+    <ResponseField name="decodeMs" type="number">
+      Decoder processing time (milliseconds)
+    </ResponseField>
+    
+    <ResponseField name="batchMs" type="number">
+      Batch processing time (milliseconds)
+    </ResponseField>
+    
+    <ResponseField name="promptMs" type="number">
+      Prompt processing time (milliseconds)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+**Typical Results**:
+- **1 thread**: Slowest, most battery efficient
+- **2 threads**: Good balance for most devices
+- **4 threads**: Fast on modern devices (6+ cores)
+- **6+ threads**: Diminishing returns, more heat/battery drain
+
+### Best Practices
+
+```typescript
+const transcribeOptions = {
+  maxThreads: 2,  // Conservative for battery life
+}
+
+// For real-time (prioritize speed)
+const realtimeOptions = {
+  maxThreads: 4,  // More threads for responsiveness
+}
+
+// For background processing (prioritize efficiency)
+const backgroundOptions = {
+  maxThreads: 1,  // Minimal resource usage
+}
+```
+
+## GPU Acceleration
+
+### iOS Metal Acceleration
+
+iOS devices support Metal GPU acceleration for significant speed improvements.
+
+```typescript
+const whisperContext = await initWhisper({
+  filePath: modelPath,
+  useGpu: true,  // Enable Metal (default: true)
+})
+
+console.log('GPU active:', whisperContext.gpu)
+console.log('Reason if not:', whisperContext.reasonNoGPU)
+```
+
+<ParamField path="useGpu" type="boolean" default="true">
+  Enable Metal GPU acceleration on iOS
+  
+  **Requirements**:
+  - iOS device (not simulator)
+  - Metal-compatible device (iPhone 5s+, iPad Air+)
+  - Model supports GPU acceleration
+</ParamField>
+
+**Performance Impact**:
+- **2-4x faster** encoding on compatible devices
+- Reduced CPU usage
+- Lower battery consumption for sustained transcription
+
+**Check GPU Status**:
+```typescript
+if (!whisperContext.gpu) {
+  console.warn('GPU not available:', whisperContext.reasonNoGPU)
+  // Reasons: 'Simulator', 'Metal not supported', 'Build flag disabled'
+}
+```
+
+### Disabling Metal (Build-time)
+
+To reduce binary size or avoid Metal dependency:
+
+```ruby Podfile
+ENV['RNWHISPER_DISABLE_METAL'] = '1'
+pod install
+```
+
+### iOS Core ML Acceleration
+
+Core ML accelerates the encoder on iOS 15.0+.
+
+```typescript
+const whisperContext = await initWhisper({
+  filePath: 'ggml-base.en.bin',
+  useCoreMLIos: true,  // Enable Core ML (default: true)
+  coreMLModelAsset: {
+    filename: 'ggml-base.en-encoder.mlmodelc',
+    assets: [
+      require('./models/ggml-base.en-encoder.mlmodelc/weights/weight.bin'),
+      require('./models/ggml-base.en-encoder.mlmodelc/model.mil'),
+      require('./models/ggml-base.en-encoder.mlmodelc/coremldata.bin'),
+    ],
+  },
+})
+```
+
+<ParamField path="useCoreMLIos" type="boolean" default="true">
+  Enable Core ML encoder acceleration
+  
+  **Requirements**:
+  - iOS 15.0+
+  - Core ML model files (`.mlmodelc` directory)
+  - Model files co-located with GGML model
+</ParamField>
+
+**Core ML vs Metal**:
+- **Core ML**: Encoder only, requires model files
+- **Metal**: Full acceleration, no extra files needed
+- **Recommendation**: Use Metal (`useGpu: true`) for simplicity
+
+**Disabling Core ML**:
+```ruby Podfile
+ENV['RNWHISPER_DISABLE_COREML'] = '1'
+pod install
+```
+
+### Flash Attention (Experimental)
+
+```typescript
+const whisperContext = await initWhisper({
+  filePath: modelPath,
+  useGpu: true,
+  useFlashAttn: true,  // Experimental optimization
+})
+```
+
+<ParamField path="useFlashAttn" type="boolean" default="false">
+  Enable Flash Attention optimization
+  
+  **Recommended**: Only when GPU is available
+  
+  **Benefits**: Faster attention computation, lower memory usage
+  
+  **Trade-offs**: Slight accuracy impact, experimental
+</ParamField>
+
+## Transcription Options Tuning
+
+### Language Detection
+
+```typescript
+// Auto-detect (slower, 1-2 second overhead)
+const autoResult = await whisperContext.transcribe(audioPath, {
+  language: 'auto',
+})
+
+// Specify language (faster, no detection overhead)
+const enResult = await whisperContext.transcribe(audioPath, {
+  language: 'en',  // English
+})
+```
+
+**Recommendation**: Always specify language if known (saves 1-2 seconds).
+
+### Beam Search
+
+```typescript
+const options = {
+  beamSize: 1,   // Greedy decoding (fast, default)
+  // beamSize: 5,   // Beam search (slower, more accurate)
+}
+```
+
+<ParamField path="beamSize" type="number" default="1">
+  Beam size for beam search decoding
+  
+  - **1**: Greedy decoding (fastest)
+  - **3-5**: Moderate beam search (balanced)
+  - **10+**: Large beam (slow, diminishing returns)
+  
+  **Impact**: 2-3x slower with beam size 5, marginal accuracy gain
+</ParamField>
+
+### Temperature Sampling
+
+```typescript
+const options = {
+  temperature: 0.0,  // Deterministic (default)
+  // temperature: 0.2,  // Slight randomness
+  // temperature: 0.8,  // More creative (for generation tasks)
+}
+```
+
+<ParamField path="temperature" type="number" default="0.0">
+  Sampling temperature for decoding
+  
+  - **0.0**: Deterministic, fastest
+  - **0.0-0.5**: Low randomness
+  - **0.5-1.0**: Higher randomness (slower)
+</ParamField>
+
+### Context and Length
+
+```typescript
+const options = {
+  maxContext: -1,  // Unlimited context (default)
+  // maxContext: 224,  // Limit context window
+  
+  maxLen: 0,       // No segment length limit (default)
+  // maxLen: 20,      // Limit segment to 20 tokens (faster)
+}
+```
+
+## Realtime Transcription Optimization
+
+### Slice Configuration
+
+```typescript
+import { RealtimeTranscriber } from 'whisper.rn/src/realtime-transcription'
+
+const transcriber = new RealtimeTranscriber(
+  { whisperContext, audioStream },
+  {
+    audioSliceSec: 25,  // Shorter than 30s for better responsiveness
+    audioMinSec: 1,     // Minimum before transcribing
+    maxSlicesInMemory: 2,  // Lower memory usage
+    
+    transcribeOptions: {
+      language: 'en',    // Skip auto-detection
+      maxThreads: 4,     // More threads for realtime
+      beamSize: 1,       // Fast greedy decoding
+    },
+    
+    realtimeProcessingPauseMs: 200,  // Update frequency
+    initRealtimeAfterMs: 200,        // Delay before first transcription
+  }
+)
+```
+
+<ParamField path="audioSliceSec" type="number" default="30">
+  Slice duration in seconds
+  
+  - **20-25s**: More responsive, more overhead
+  - **30s**: Optimal (matches Whisper chunk size)
+  - **40+s**: Slower updates, less overhead
+</ParamField>
+
+<ParamField path="realtimeProcessingPauseMs" type="number" default="200">
+  Interval between realtime processing updates
+  
+  - **100ms**: Very responsive, higher CPU
+  - **200ms**: Balanced (default)
+  - **500ms**: Lower CPU, less responsive
+</ParamField>
+
+### VAD Configuration
+
+VAD (Voice Activity Detection) reduces unnecessary transcription.
+
+```typescript
+import { VAD_PRESETS } from 'whisper.rn/src/realtime-transcription/types'
+
+const transcriber = new RealtimeTranscriber(
+  {
+    whisperContext,
+    vadContext,  // Include VAD context
+    audioStream,
+  },
+  {
+    // Use preset or custom VAD options
+    transcribeOptions: {
+      // VAD preset applied via vadContext.updateOptions()
+    },
+  }
+)
+```
+
+**VAD Presets**:
+
+```typescript types.ts
+export const VAD_PRESETS = {
+  default: {
+    threshold: 0.5,
+    minSpeechDurationMs: 250,
+    minSilenceDurationMs: 100,
+  },
+  
+  sensitive: {
+    threshold: 0.3,           // Detects quieter speech
+    minSpeechDurationMs: 100,
+  },
+  
+  conservative: {
+    threshold: 0.7,           // Avoids false positives
+    minSpeechDurationMs: 500,
+  },
+  
+  noisy: {
+    threshold: 0.75,          // Strict for noisy environments
+    minSpeechDurationMs: 400,
+  },
+}
+```
+
+## Platform-Specific Optimizations
+
+### iOS
+
+**1. Use Metal Acceleration**
+```typescript
+const whisperContext = await initWhisper({
+  filePath: modelPath,
+  useGpu: true,  // Metal (default)
+})
+```
+
+**2. Build Optimizations**
+```ruby Podfile
+# Use pre-built framework (faster builds)
+pod install
+
+# Or build from source with optimizations
+ENV['RNWHISPER_BUILD_FROM_SOURCE'] = '1'
+pod install
+```
+
+**3. Extended Virtual Addressing** (for large models)
+```xml Info.plist
+<key>com.apple.developer.kernel.extended-virtual-addressing</key>
+<true/>
+```
+
+### Android
+
+**1. NDK Configuration**
+```gradle android/build.gradle
+android {
+  ndkVersion "24.0.8215888"  // Recommended for Apple Silicon Macs
+  
+  defaultConfig {
+    ndk {
+      abiFilters 'arm64-v8a', 'armeabi-v7a'  // Limit to ARM
+    }
+  }
+}
+```
+
+**2. ProGuard** (for release builds)
+```proguard proguard-rules.pro
+-keep class com.rnwhisper.** { *; }
+```
+
+**3. 16KB Page Size Support** (Android 15+)
+- Automatically handled by whisper.cpp build system
+
+## Testing Performance
+
+### Release Mode
+
+Always test performance in **Release mode** (Debug is 5-10x slower).
+
+```bash
+# iOS
+yarn example ios --mode Release
+
+# Android
+yarn example android --mode release
+```
+
+### Benchmarking
+
+```typescript
+import { initWhisper } from 'whisper.rn'
+
+const runBenchmark = async () => {
+  const whisperContext = await initWhisper({ filePath: modelPath })
+  
+  console.log('GPU:', whisperContext.gpu)
+  console.log('---')
+  
+  // Test different thread counts
+  for (let threads = 1; threads <= 8; threads++) {
+    const start = Date.now()
+    const result = await whisperContext.bench(threads)
+    const total = Date.now() - start
+    
+    console.log(`Threads: ${threads}`)
+    console.log(`Total time: ${total}ms`)
+    console.log(`Encode: ${result.encodeMs}ms`)
+    console.log(`Decode: ${result.decodeMs}ms`)
+    console.log(`Throughput: ${(30000 / total).toFixed(2)}x realtime`)
+    console.log('---')
+  }
+  
+  await whisperContext.release()
+}
+
+runBenchmark()
+```
+
+### Real-world Testing
+
+```typescript
+const testTranscription = async () => {
+  const whisperContext = await initWhisper({
+    filePath: modelPath,
+    useGpu: true,
+  })
+  
+  const configs = [
+    { name: 'Fast', threads: 2, beam: 1 },
+    { name: 'Balanced', threads: 4, beam: 1 },
+    { name: 'Accurate', threads: 4, beam: 5 },
+  ]
+  
+  for (const config of configs) {
+    const start = Date.now()
+    
+    const { promise } = whisperContext.transcribe(audioPath, {
+      maxThreads: config.threads,
+      beamSize: config.beam,
+      language: 'en',
+    })
+    
+    const result = await promise
+    const duration = Date.now() - start
+    
+    console.log(`${config.name}:`, duration, 'ms')
+    console.log('Result:', result.result.substring(0, 50))
+  }
+  
+  await whisperContext.release()
+}
+```
+
+## Performance Checklist
+
+<AccordionGroup>
+  <Accordion title="Model Selection">
+    - [ ] Use smallest model that meets accuracy needs
+    - [ ] Consider quantized models (q8, q5)
+    - [ ] Avoid medium/large on mobile
+    - [ ] Use `.en` models for English-only
+  </Accordion>
+
+  <Accordion title="Configuration">
+    - [ ] Set `language` (avoid 'auto')
+    - [ ] Use `beamSize: 1` for speed
+    - [ ] Tune `maxThreads` with bench()
+    - [ ] Enable GPU on iOS (`useGpu: true`)
+    - [ ] Limit `maxSlicesInMemory` for realtime
+  </Accordion>
+
+  <Accordion title="Testing">
+    - [ ] Always test in Release mode
+    - [ ] Benchmark on target devices
+    - [ ] Monitor memory usage
+    - [ ] Test with realistic audio (length, quality)
+  </Accordion>
+
+  <Accordion title="Production">
+    - [ ] Release contexts after use
+    - [ ] Handle out-of-memory errors
+    - [ ] Provide fallback for low-end devices
+    - [ ] Monitor crash analytics
+  </Accordion>
+</AccordionGroup>
+
+## Troubleshooting Performance
+
+<AccordionGroup>
+  <Accordion title="Slow Transcription">
+    **Symptoms**: Transcription takes longer than audio duration
+    
+    **Solutions**:
+    - Test in Release mode (not Debug)
+    - Use smaller model (base/tiny instead of small/medium)
+    - Increase `maxThreads` (test with bench())
+    - Enable GPU on iOS (`useGpu: true`)
+    - Set language explicitly (skip auto-detection)
+    - Use `beamSize: 1` (greedy decoding)
+  </Accordion>
+
+  <Accordion title="High Memory Usage">
+    **Solutions**:
+    - Use smaller model
+    - Reduce `maxSlicesInMemory` (1-2 for realtime)
+    - Release contexts: `await context.release()`
+    - Disable `promptPreviousSlices`
+    - Enable Extended Virtual Addressing (iOS large models)
+  </Accordion>
+
+  <Accordion title="Battery Drain">
+    **Solutions**:
+    - Reduce `maxThreads` (try 1-2)
+    - Use smaller model
+    - Increase `realtimeProcessingPauseMs`
+    - Enable GPU (iOS) - more efficient than CPU
+    - Use VAD to skip silence
+  </Accordion>
+
+  <Accordion title="GPU Not Active (iOS)">
+    **Check**:
+    ```typescript
+    console.log('GPU:', whisperContext.gpu)
+    console.log('Reason:', whisperContext.reasonNoGPU)
+    ```
+    
+    **Reasons**:
+    - Running on simulator (Metal not available)
+    - `RNWHISPER_DISABLE_METAL=1` build flag set
+    - Device doesn't support Metal
+    
+    **Solution**: Test on physical device, check Podfile
+  </Accordion>
+</AccordionGroup>
+
+## Related
+
+- [Memory Management](/advanced/memory-management) - SliceManager and context cleanup
+- [Realtime Transcription](/api-reference/realtime-transcriber) - RealtimeTranscriber API
+- [VAD](/api-reference/init-whisper-vad) - Voice activity detection
+- [whisper.cpp Performance](https://github.com/ggerganov/whisper.cpp#performance) - Upstream benchmarks

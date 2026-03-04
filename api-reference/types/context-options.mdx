@@ -1,0 +1,144 @@
+---
+title: ContextOptions
+description: Configuration options for initializing a Whisper context
+---
+
+Interface for configuring the Whisper context during initialization with `initWhisper()`. Controls model loading, GPU acceleration, and Core ML settings.
+
+## Properties
+
+<ParamField path="filePath" type="string | number" required>
+  Path to the GGML model file or asset require number.
+  
+  Can be:
+  - Absolute file path: `'/path/to/model.bin'`
+  - Asset require: `require('./assets/model.bin')`
+  - Bundle asset name (iOS/Android): `'model.bin'` with `isBundleAsset: true`
+</ParamField>
+
+<ParamField path="coreMLModelAsset" type="object">
+  Core ML model assets configuration. Required when using `require()` for the model path and enabling Core ML on iOS.
+  
+  <Expandable title="CoreML Asset Properties">
+    <ParamField path="filename" type="string" required>
+      The Core ML model directory name (e.g., 'ggml-tiny.en-encoder')
+    </ParamField>
+    
+    <ParamField path="assets" type="(string | number)[]" required>
+      Array of asset paths or require numbers for Core ML files. Should include:
+      - `analytics/coremldata.bin`
+      - `weights/weight.bin`
+      - `model.mil`
+      - `coremldata.bin`
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="isBundleAsset" type="boolean">
+  Whether the file path is a bundle asset name (for pure string filePath). Set to `true` if the model is bundled in the app's assets.
+</ParamField>
+
+<ParamField path="useCoreMLIos" type="boolean" default="true">
+  Prefer to use Core ML model if it exists (iOS only). If set to `false`, even if the Core ML model exists, it will not be used.
+  
+  Core ML accelerates the encoder on iOS 15.0+.
+</ParamField>
+
+<ParamField path="useGpu" type="boolean" default="true">
+  Use GPU/Metal acceleration if available (iOS only). When enabled, uses Metal for GPU-accelerated inference.
+  
+  If enabled, Core ML option will be ignored.
+</ParamField>
+
+<ParamField path="useFlashAttn" type="boolean" default="false">
+  Use Flash Attention optimization. Only recommended if GPU is available. Can significantly improve performance on supported devices.
+</ParamField>
+
+## Usage Examples
+
+### Basic Initialization
+
+```typescript
+import { initWhisper } from 'whisper.rn'
+
+const context = await initWhisper({
+  filePath: '/path/to/ggml-tiny.en.bin'
+})
+```
+
+### Using Asset Require
+
+```typescript
+const context = await initWhisper({
+  filePath: require('../assets/ggml-tiny.en.bin')
+})
+```
+
+### With GPU Acceleration
+
+```typescript
+const context = await initWhisper({
+  filePath: '/path/to/ggml-base.bin',
+  useGpu: true,
+  useFlashAttn: true
+})
+```
+
+### With Core ML (iOS)
+
+```typescript
+const context = await initWhisper({
+  filePath: require('../assets/ggml-tiny.en.bin'),
+  useCoreMLIos: true,
+  coreMLModelAsset: {
+    filename: 'ggml-tiny.en-encoder',
+    assets: [
+      require('../assets/ggml-tiny.en-encoder/model.mil'),
+      require('../assets/ggml-tiny.en-encoder/coremldata.bin'),
+      require('../assets/ggml-tiny.en-encoder/weights/weight.bin'),
+      require('../assets/ggml-tiny.en-encoder/analytics/coremldata.bin'),
+    ]
+  }
+})
+```
+
+### Bundle Asset (iOS/Android)
+
+```typescript
+const context = await initWhisper({
+  filePath: 'ggml-tiny.en.bin',
+  isBundleAsset: true
+})
+```
+
+## Platform Notes
+
+### iOS
+- Core ML models must be co-located with the GGML model
+- Core ML model directory format: `<model-name>-encoder.mlmodelc/`
+- GPU acceleration uses Metal framework
+- Flash Attention requires GPU to be enabled
+
+### Android
+- GPU acceleration is not currently supported
+- Core ML options are ignored on Android
+- Use `isBundleAsset: true` for assets in `android/app/src/main/assets/`
+
+## Checking GPU Status
+
+```typescript
+const context = await initWhisper({
+  filePath: '/path/to/model.bin',
+  useGpu: true
+})
+
+console.log('GPU enabled:', context.gpu)
+if (!context.gpu) {
+  console.log('Reason:', context.reasonNoGPU)
+}
+```
+
+## Related
+
+- [initWhisper()](/api-reference/init-whisper) - Initialize a Whisper context
+- [WhisperContext](/api-reference/whisper-context) - The returned context object

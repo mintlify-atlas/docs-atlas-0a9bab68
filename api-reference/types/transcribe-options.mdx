@@ -1,0 +1,99 @@
+---
+title: TranscribeOptions
+description: Configuration options for transcribing audio with Whisper
+---
+
+Interface for configuring audio transcription behavior. Used with `transcribe()`, `transcribeData()`, and `transcribeRealtime()` methods.
+
+## Properties
+
+<ParamField path="language" type="string" default="auto">
+  Spoken language code (e.g., 'en', 'es', 'fr'). Set to 'auto' for automatic language detection.
+</ParamField>
+
+<ParamField path="translate" type="boolean" default="false">
+  Translate from source language to English. When enabled, the transcription will be translated to English regardless of the input language.
+</ParamField>
+
+<ParamField path="maxThreads" type="number" default="2 or 4">
+  Number of threads to use during computation. Default is 2 for 4-core devices, 4 for devices with more cores.
+</ParamField>
+
+<ParamField path="nProcessors" type="number" default="1">
+  Number of processors to use for parallel processing with `whisper_full_parallel`. Set to 1 to use `whisper_full` instead.
+</ParamField>
+
+<ParamField path="maxContext" type="number">
+  Maximum number of text context tokens to store. Controls how much previous transcription context is retained.
+</ParamField>
+
+<ParamField path="maxLen" type="number">
+  Maximum segment length in characters. Limits the length of individual transcription segments.
+</ParamField>
+
+<ParamField path="tokenTimestamps" type="boolean">
+  Enable token-level timestamps. When enabled, provides more granular timestamp information for each token.
+</ParamField>
+
+<ParamField path="tdrzEnable" type="boolean">
+  Enable tinydiarize speaker diarization. Requires a tdrz model to be loaded.
+</ParamField>
+
+<ParamField path="wordThold" type="number">
+  Word timestamp probability threshold. Controls the confidence threshold for word-level timestamps.
+</ParamField>
+
+<ParamField path="offset" type="number">
+  Time offset in milliseconds. Specifies where to start transcription in the audio file.
+</ParamField>
+
+<ParamField path="duration" type="number">
+  Duration of audio to process in milliseconds. If set, only processes the specified duration from the offset.
+</ParamField>
+
+<ParamField path="temperature" type="number">
+  Initial decoding temperature. Controls the randomness in the decoding process. Higher values increase randomness.
+</ParamField>
+
+<ParamField path="temperatureInc" type="number">
+  Temperature increment value. Used when adjusting temperature during decoding.
+</ParamField>
+
+<ParamField path="beamSize" type="number">
+  Beam size for beam search decoding. Larger values can improve accuracy but increase computation time.
+</ParamField>
+
+<ParamField path="bestOf" type="number">
+  Number of best candidates to keep during decoding. Higher values may improve accuracy at the cost of performance.
+</ParamField>
+
+<ParamField path="prompt" type="string">
+  Initial prompt text to guide transcription. Provides context to improve transcription accuracy for specific terminology or style.
+</ParamField>
+
+## Usage Example
+
+```typescript
+import { initWhisper } from 'whisper.rn'
+
+const context = await initWhisper({
+  filePath: 'path/to/model.bin'
+})
+
+const options: TranscribeOptions = {
+  language: 'en',
+  translate: false,
+  maxThreads: 4,
+  tokenTimestamps: true,
+  prompt: 'Technical discussion about React Native'
+}
+
+const { promise } = context.transcribe('path/to/audio.wav', options)
+const result = await promise
+```
+
+## Related
+
+- [TranscribeResult](/api-reference/types/transcribe-result) - The result object returned from transcription
+- [transcribe()](/api-reference/whisper-context#transcribe) - Transcribe audio files
+- [transcribeData()](/api-reference/whisper-context#transcribedata) - Transcribe audio data

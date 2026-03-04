@@ -1,0 +1,444 @@
+---
+title: Expo Setup
+description: Use whisper.rn in Expo projects with prebuild
+---
+
+## Overview
+
+whisper.rn works with Expo through the prebuild workflow. Since whisper.rn includes native code, you cannot use it in Expo Go. You must create a development build.
+
+<Warning>
+  whisper.rn requires native modules and **cannot** be used with Expo Go. You must use the prebuild workflow to generate native projects.
+</Warning>
+
+## Installation
+
+<Steps>
+  <Step title="Install the package">
+    ```bash
+    npx expo install whisper.rn
+    ```
+  </Step>
+  
+  <Step title="Prebuild your project">
+    Generate the native iOS and Android projects:
+    
+    ```bash
+    npx expo prebuild
+    ```
+    
+    This creates `ios/` and `android/` directories with the native code.
+  </Step>
+  
+  <Step title="Run on a device or simulator">
+    ```bash
+    # iOS
+    npx expo run:ios
+    
+    # Android
+    npx expo run:android
+    ```
+  </Step>
+</Steps>
+
+## Configuration
+
+### App Config (app.json)
+
+Add necessary permissions to your `app.json` or `app.config.js`:
+
+```json
+{
+  "expo": {
+    "name": "Your App",
+    "slug": "your-app",
+    "ios": {
+      "bundleIdentifier": "com.yourcompany.yourapp",
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "This app requires microphone access to transcribe speech"
+      }
+    },
+    "android": {
+      "package": "com.yourcompany.yourapp",
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
+    },
+    "plugins": [
+      // Add any other plugins you need
+    ]
+  }
+}
+```
+
+### Using app.config.js for Dynamic Configuration
+
+For more control, use `app.config.js`:
+
+```javascript
+export default {
+  expo: {
+    name: 'Your App',
+    slug: 'your-app',
+    ios: {
+      bundleIdentifier: 'com.yourcompany.yourapp',
+      infoPlist: {
+        NSMicrophoneUsageDescription: 'This app requires microphone access to transcribe speech',
+      },
+      // For medium/large models
+      entitlements: {
+        'com.apple.developer.kernel.extended-virtual-addressing': true,
+      },
+    },
+    android: {
+      package: 'com.yourcompany.yourapp',
+      permissions: ['android.permission.RECORD_AUDIO'],
+    },
+  },
+}
+```
+
+## Platform-Specific Setup
+
+### iOS Configuration
+
+After prebuild, you may need to install CocoaPods dependencies:
+
+```bash
+cd ios
+pod install
+cd ..
+```
+
+For custom build configurations (optional):
+
+1. Open the generated Xcode workspace: `ios/YourApp.xcworkspace`
+2. Follow the [iOS Setup guide](/platform-guides/ios) for:
+   - Extended Virtual Addressing (for large models)
+   - Core ML configuration
+   - Custom build flags
+
+### Android Configuration
+
+#### ProGuard Rules
+
+If you're building release APKs with minification enabled, add ProGuard rules.
+
+Create or edit `android/app/proguard-rules.pro`:
+
+```proguard
+# whisper.rn
+-keep class com.rnwhisper.** { *; }
+```
+
+Then ensure it's referenced in `android/app/build.gradle`:
+
+```gradle
+android {
+  buildTypes {
+    release {
+      minifyEnabled true
+      proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+    }
+  }
+}
+```
+
+#### NDK Version
+
+For Apple Silicon Macs, set the NDK version in `android/build.gradle`:
+
+```gradle
+buildscript {
+  ext {
+    ndkVersion = "24.0.8215888"
+  }
+}
+```
+
+## Metro Configuration
+
+If you want to bundle models or audio files as assets, configure Metro bundler.
+
+Create or edit `metro.config.js` in your project root:
+
+```javascript
+const { getDefaultConfig } = require('expo/metro-config')
+
+const config = getDefaultConfig(__dirname)
+
+// Add asset extensions for whisper models
+config.resolver.assetExts.push(
+  'bin',  // GGML model files
+  'mil'   // Core ML model files (iOS)
+)
+
+module.exports = config
+```
+
+Then you can use `require()` to bundle assets:
+
+```typescript
+import { initWhisper } from 'whisper.rn'
+
+const whisperContext = await initWhisper({
+  filePath: require('../assets/ggml-tiny.en.bin'),
+})
+```
+
+<Warning>
+  Bundling large models significantly increases your app size. The React Native packager has a 2GB file limit, so you cannot bundle the original f16 `large` model (2.9GB).
+</Warning>
+
+## Development Builds
+
+### Create a Development Build
+
+For Expo projects, you'll need a development build instead of Expo Go:
+
+```bash
+# Install expo-dev-client
+npx expo install expo-dev-client
+
+# Run prebuild
+npx expo prebuild
+
+# Build and run
+npx expo run:ios
+# or
+npx expo run:android
+```
+
+### EAS Build
+
+For building with EAS:
+
+<Steps>
+  <Step title="Install EAS CLI">
+    ```bash
+    npm install -g eas-cli
+    ```
+  </Step>
+  
+  <Step title="Configure EAS">
+    ```bash
+    eas build:configure
+    ```
+  </Step>
+  
+  <Step title="Build for development">
+    ```bash
+    eas build --profile development --platform ios
+    # or
+    eas build --profile development --platform android
+    ```
+  </Step>
+</Steps>
+
+Example `eas.json`:
+
+```json
+{
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "ios": {
+        "resourceClass": "m-medium"
+      },
+      "android": {
+        "buildType": "apk"
+      }
+    },
+    "preview": {
+      "distribution": "internal"
+    },
+    "production": {
+      "ios": {
+        "resourceClass": "m-medium"
+      }
+    }
+  }
+}
+```
+
+## Requesting Permissions
+
+Use `expo-permissions` or React Native's built-in APIs:
+
+### Using React Native APIs
+
+```typescript
+import { PermissionsAndroid, Platform } from 'react-native'
+import { request, PERMISSIONS, RESULTS } from 'react-native-permissions'
+
+const requestMicrophonePermission = async () => {
+  if (Platform.OS === 'android') {
+    const granted = await PermissionsAndroid.request(
+      PermissionsAndroid.PERMISSIONS.RECORD_AUDIO
+    )
+    return granted === PermissionsAndroid.RESULTS.GRANTED
+  }
+  
+  if (Platform.OS === 'ios') {
+    const result = await request(PERMISSIONS.IOS.MICROPHONE)
+    return result === RESULTS.GRANTED
+  }
+  
+  return false
+}
+
+// Use before starting realtime transcription
+const hasPermission = await requestMicrophonePermission()
+if (!hasPermission) {
+  console.log('Microphone permission denied')
+}
+```
+
+## Workflow Comparison
+
+### Managed Workflow ❌
+
+```
+Expo Go → whisper.rn (Native modules) → NOT COMPATIBLE
+```
+
+### Prebuild Workflow ✅
+
+```
+npx expo prebuild → Native projects generated → whisper.rn works
+```
+
+### Bare Workflow ✅
+
+```
+React Native CLI project → Add Expo → whisper.rn works
+```
+
+## Common Issues
+
+### "Module not found" in Expo Go
+
+**Error**: Cannot use whisper.rn in Expo Go
+
+**Solution**: Use prebuild and create a development build:
+
+```bash
+npx expo prebuild
+npx expo run:ios  # or run:android
+```
+
+### Prebuild Fails
+
+**Error**: Prebuild command fails
+
+**Solution**: Ensure you have the required tools:
+
+- **iOS**: Xcode and CocoaPods installed
+- **Android**: Android Studio and Android SDK installed
+
+```bash
+# Install CocoaPods (iOS)
+sudo gem install cocoapods
+
+# Verify Android SDK
+adb --version
+```
+
+### Permission Denied at Runtime
+
+**Error**: Microphone permission not granted
+
+**Solution**: Verify permissions are in `app.json` and request at runtime before using:
+
+```typescript
+// Request before using realtime features
+const hasPermission = await requestMicrophonePermission()
+```
+
+### Build Fails with Large Models
+
+**Error**: Bundle size exceeds limit
+
+**Solution**: Download models at runtime instead of bundling:
+
+```typescript
+import RNFS from 'react-native-fs'
+
+// Download model at runtime
+const modelPath = `${RNFS.DocumentDirectoryPath}/ggml-tiny.en.bin`
+await RNFS.downloadFile({
+  fromUrl: 'https://your-cdn.com/ggml-tiny.en.bin',
+  toFile: modelPath,
+}).promise
+
+const whisperContext = await initWhisper({
+  filePath: modelPath,
+})
+```
+
+## Testing
+
+### Development Build
+
+Test in development mode:
+
+```bash
+npx expo run:ios
+# or
+npx expo run:android
+```
+
+### Release Build
+
+Test performance with optimized release build:
+
+```bash
+# iOS
+npx expo run:ios --configuration Release
+
+# Android  
+npx expo run:android --variant release
+```
+
+<Note>
+  Always test performance with release builds. Development builds can be significantly slower.
+</Note>
+
+## EAS Update
+
+After creating a development build, you can use EAS Update for OTA updates of your JavaScript code (but not native changes):
+
+```bash
+eas update --branch production
+```
+
+<Warning>
+  If you modify native code or update whisper.rn, you need to create a new build. OTA updates only work for JavaScript changes.
+</Warning>
+
+## Example Project Structure
+
+```
+my-expo-app/
+├── app.json (or app.config.js)
+├── metro.config.js
+├── package.json
+├── assets/
+│   └── ggml-tiny.en.bin (optional, if bundling)
+├── ios/ (generated by prebuild)
+│   └── Podfile
+├── android/ (generated by prebuild)
+│   └── app/
+│       ├── build.gradle
+│       └── proguard-rules.pro
+└── src/
+    └── App.tsx
+```
+
+## Next Steps
+
+- [iOS Setup](/platform-guides/ios) - iOS-specific configuration
+- [Android Setup](/platform-guides/android) - Android-specific configuration  
+- [Basic Usage](/api-reference/core) - Learn how to use whisper.rn
+- [Expo Documentation](https://docs.expo.dev/workflow/prebuild/) - Learn more about prebuild

@@ -1,0 +1,321 @@
+---
+title: Voice Activity Detection
+description: Detect speech segments in audio using the Silero VAD model
+---
+
+Voice Activity Detection (VAD) uses the Silero VAD model to identify speech segments in audio, filtering out silence and background noise.
+
+## Overview
+
+VAD is useful for:
+- Pre-processing audio before transcription to reduce processing time
+- Detecting speech boundaries for segmentation
+- Filtering out silent portions of recordings
+- Triggering transcription only when speech is present
+
+## Initialize VAD Context
+
+```typescript
+import { initWhisperVad } from 'whisper.rn'
+
+const vadContext = await initWhisperVad({
+  filePath: require('./assets/ggml-silero-v6.2.0.bin'), // VAD model file
+  useGpu: true,        // Use GPU acceleration (iOS only)
+  nThreads: 4,         // Number of threads for processing
+})
+```
+
+<Tip>
+  Download the Silero VAD model from the [whisper.cpp releases](https://github.com/ggerganov/whisper.cpp/releases) or [Hugging Face](https://huggingface.co/ggerganov/whisper.cpp).
+</Tip>
+
+### Initialization Options
+
+```typescript
+type VadContextOptions = {
+  filePath: string | number       // Path to VAD model or require() asset
+  isBundleAsset?: boolean         // Is filePath a bundle asset (for string paths)
+  useGpu?: boolean                // Use GPU acceleration (iOS only, default: true)
+  nThreads?: number               // Processing threads (default: 2 for 4-core, 4 for 8+)
+}
+```
+
+## Detect Speech Segments
+
+### From Audio Files
+
+Detect speech in WAV files, base64 audio, or bundled assets:
+
+<CodeGroup>
+
+```typescript File Path
+const segments = await vadContext.detectSpeech(
+  'file:///path/to/audio.wav',
+  {
+    threshold: 0.5,              // Speech probability threshold (0.0-1.0)
+    minSpeechDurationMs: 250,    // Minimum speech duration in ms
+    minSilenceDurationMs: 100,   // Minimum silence duration in ms
+    maxSpeechDurationS: 30,      // Maximum speech duration in seconds
+    speechPadMs: 30,             // Padding around speech segments in ms
+    samplesOverlap: 0.1,         // Overlap between analysis windows
+  }
+)
+
+for (const segment of segments) {
+  console.log(`Speech: ${segment.t0}ms - ${segment.t1}ms`)
+}
+```
+
+```typescript Bundled Asset
+const segments = await vadContext.detectSpeech(
+  require('../assets/audio.wav'),
+  { threshold: 0.5 }
+)
+```
+
+```typescript Base64 WAV
+const base64Audio = 'data:audio/wav;base64,UklGRi4AAABXQVZFZm10...'
+
+const segments = await vadContext.detectSpeech(
+  base64Audio,
+  { threshold: 0.5 }
+)
+```
+
+</CodeGroup>
+
+### From Raw Audio Data
+
+Detect speech in base64-encoded PCM or ArrayBuffer:
+
+<CodeGroup>
+
+```typescript ArrayBuffer (JSI)
+// Most efficient - uses JSI bindings
+const audioBuffer: ArrayBuffer = // ... 16-bit PCM, mono, 16kHz
+
+const segments = await vadContext.detectSpeechData(
+  audioBuffer,
+  {
+    threshold: 0.5,
+    minSpeechDurationMs: 250,
+  }
+)
+```
+
+```typescript Base64 PCM
+const base64PcmData = '...' // base64-encoded float32 PCM
+
+const segments = await vadContext.detectSpeechData(
+  base64PcmData,
+  { threshold: 0.5 }
+)
+```
+
+</CodeGroup>
+
+## VAD Options
+
+```typescript
+type VadOptions = {
+  threshold?: number              // Probability threshold (0.0-1.0, default: 0.5)
+  minSpeechDurationMs?: number    // Min speech duration in ms (default: 250)
+  minSilenceDurationMs?: number   // Min silence to end speech in ms (default: 100)
+  maxSpeechDurationS?: number     // Max continuous speech in seconds (default: 30)
+  speechPadMs?: number            // Padding before/after speech in ms (default: 30)
+  samplesOverlap?: number         // Analysis window overlap (0.0-1.0, default: 0.1)
+}
+```
+
+### Option Explanations
+
+| Option | Description | Typical Range |
+|--------|-------------|---------------|
+| `threshold` | Confidence level to classify as speech (lower = more sensitive) | 0.3-0.8 |
+| `minSpeechDurationMs` | Ignore detections shorter than this | 100-500 ms |
+| `minSilenceDurationMs` | How much silence ends a speech segment | 50-300 ms |
+| `maxSpeechDurationS` | Force segment split after this duration | 15-60 s |
+| `speechPadMs` | Extra audio before/after detected speech | 10-100 ms |
+| `samplesOverlap` | Overlap between analysis windows (higher = smoother) | 0.05-0.3 |
+
+## VAD Result
+
+```typescript
+type VadSegment = {
+  t0: number  // Start time in seconds
+  t1: number  // End time in seconds
+}
+```
+
+**Example result:**
+
+```typescript
+[
+  { t0: 0.5, t1: 3.2 },    // First speech segment: 0.5s - 3.2s
+  { t0: 4.1, t1: 7.8 },    // Second speech segment: 4.1s - 7.8s
+  { t0: 9.0, t1: 12.5 }    // Third speech segment: 9.0s - 12.5s
+]
+```
+
+## Processing Results
+
+<Steps>
+
+<Step title="Detect segments">
+  ```typescript
+  const segments = await vadContext.detectSpeech(
+    audioPath,
+    { threshold: 0.5 }
+  )
+  ```
+</Step>
+
+<Step title="Analyze segments">
+  ```typescript
+  segments.forEach((segment, index) => {
+    const duration = segment.t1 - segment.t0
+    console.log(`Segment ${index + 1}:`)
+    console.log(`  Start: ${segment.t0.toFixed(2)}s`)
+    console.log(`  End: ${segment.t1.toFixed(2)}s`)
+    console.log(`  Duration: ${duration.toFixed(2)}s`)
+  })
+  ```
+</Step>
+
+<Step title="Filter by duration">
+  ```typescript
+  // Only keep segments longer than 1 second
+  const longSegments = segments.filter(
+    segment => (segment.t1 - segment.t0) > 1.0
+  )
+  ```
+</Step>
+
+</Steps>
+
+## Common Use Cases
+
+### Pre-filter Audio for Transcription
+
+```typescript
+import { initWhisper, initWhisperVad } from 'whisper.rn'
+
+const whisperContext = await initWhisper({ filePath: modelPath })
+const vadContext = await initWhisperVad({ filePath: vadModelPath })
+
+// Detect speech segments
+const segments = await vadContext.detectSpeech(audioPath, { threshold: 0.5 })
+
+// Transcribe only speech segments
+for (const segment of segments) {
+  const { promise } = whisperContext.transcribe(audioPath, {
+    language: 'en',
+    offset: segment.t0 * 1000,        // Convert to ms
+    duration: (segment.t1 - segment.t0) * 1000
+  })
+  
+  const { result } = await promise
+  console.log(`Segment ${segment.t0}s-${segment.t1}s: ${result}`)
+}
+```
+
+### Real-time Speech Detection
+
+See the [Realtime Transcription](/features/realtime-transcription) guide for VAD integration with live audio.
+
+### Optimize for Different Environments
+
+<Tabs>
+  <Tab title="Quiet Environment">
+    Use a **lower threshold** to catch softer speech:
+    
+    ```typescript
+    const segments = await vadContext.detectSpeech(audioPath, {
+      threshold: 0.3,              // More sensitive
+      minSpeechDurationMs: 100,    // Catch short utterances
+      speechPadMs: 50              // More padding
+    })
+    ```
+  </Tab>
+  
+  <Tab title="Noisy Environment">
+    Use a **higher threshold** to avoid false positives:
+    
+    ```typescript
+    const segments = await vadContext.detectSpeech(audioPath, {
+      threshold: 0.75,             // Less sensitive
+      minSpeechDurationMs: 400,    // Ignore brief noise
+      minSilenceDurationMs: 200    // Longer silence requirement
+    })
+    ```
+  </Tab>
+  
+  <Tab title="Continuous Speech">
+    For lectures or presentations:
+    
+    ```typescript
+    const segments = await vadContext.detectSpeech(audioPath, {
+      threshold: 0.4,
+      minSilenceDurationMs: 300,   // Don't break on short pauses
+      maxSpeechDurationS: 60,      // Allow longer segments
+      samplesOverlap: 0.15         // Smoother detection
+    })
+    ```
+  </Tab>
+</Tabs>
+
+## Memory Management
+
+```typescript
+// Release single VAD context
+await vadContext.release()
+
+// Release all VAD contexts
+import { releaseAllWhisperVad } from 'whisper.rn'
+await releaseAllWhisperVad()
+```
+
+<Warning>
+  Always release VAD contexts when done to free native resources.
+</Warning>
+
+## Audio Format Requirements
+
+Like Whisper transcription, VAD requires:
+
+| Property | Requirement |
+|----------|-------------|
+| Sample Rate | 16kHz |
+| Channels | Mono (1 channel) |
+| Bit Depth | 16-bit PCM |
+| Format | WAV file or raw PCM data |
+
+## Performance Tips
+
+1. **Enable GPU on iOS** - Set `useGpu: true` for better performance
+2. **Adjust thread count** - More threads for faster processing on multi-core devices
+3. **Use ArrayBuffer** - JSI bindings provide the best performance for in-memory audio
+4. **Tune threshold** - Start with 0.5 and adjust based on your audio environment
+5. **Balance segment length** - Shorter `maxSpeechDurationS` means more segments but better granularity
+
+## Error Handling
+
+```typescript
+try {
+  const segments = await vadContext.detectSpeech(audioPath, options)
+  
+  if (segments.length === 0) {
+    console.log('No speech detected in audio')
+  } else {
+    console.log(`Found ${segments.length} speech segments`)
+  }
+} catch (error) {
+  console.error('VAD failed:', error)
+  // Handle errors (invalid file, unsupported format, etc.)
+}
+```
+
+## See Also
+
+- [Realtime Transcription](/features/realtime-transcription) - Use VAD with live transcription
+- [File Transcription](/features/transcription) - Transcribe detected speech segments

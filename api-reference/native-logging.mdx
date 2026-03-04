@@ -1,0 +1,282 @@
+---
+title: "Native Logging"
+description: "Control and monitor native whisper.cpp logging"
+---
+
+The native logging utilities allow you to control whisper.cpp's native log output and subscribe to log messages for debugging and monitoring.
+
+## Functions
+
+### toggleNativeLog()
+
+Enable or disable native logging from whisper.cpp.
+
+```typescript
+import { toggleNativeLog } from 'whisper.rn'
+
+await toggleNativeLog(enabled)
+```
+
+#### Parameters
+
+<ParamField path="enabled" type="boolean" required>
+  Whether to enable (true) or disable (false) native logging
+</ParamField>
+
+#### Returns
+
+<ResponseField name="promise" type="Promise<void>">
+  Resolves when logging state is updated
+</ResponseField>
+
+#### Example
+
+```typescript
+// Enable native logging
+await toggleNativeLog(true)
+
+// Disable native logging
+await toggleNativeLog(false)
+```
+
+#### Notes
+
+- Logging is automatically initialized with a default callback on first use
+- If the first call is `toggleNativeLog(false)`, it will be skipped to avoid unnecessary initialization
+- JSI bindings are automatically installed if needed
+
+---
+
+### addNativeLogListener()
+
+Add a listener to receive native log messages from whisper.cpp.
+
+```typescript
+import { addNativeLogListener } from 'whisper.rn'
+
+const subscription = addNativeLogListener((level, text) => {
+  console.log(`[${level}] ${text}`)
+})
+```
+
+#### Parameters
+
+<ParamField path="listener" type="(level: string, text: string) => void" required>
+  Callback function that receives log messages
+  
+  **Parameters:**
+  - `level` - Log level (e.g., "info", "warn", "error")
+  - `text` - Log message content
+</ParamField>
+
+#### Returns
+
+<ResponseField name="subscription" type="{ remove: () => void }" required>
+  Subscription object with a `remove()` method to unsubscribe
+</ResponseField>
+
+#### Example
+
+```typescript
+const subscription = addNativeLogListener((level, text) => {
+  if (level === 'error') {
+    console.error('Native error:', text)
+  } else {
+    console.log(`[${level}] ${text}`)
+  }
+})
+
+// Later, remove the listener
+subscription.remove()
+```
+
+#### Notes
+
+- Multiple listeners can be added simultaneously
+- Each listener receives all log messages
+- Remember to call `remove()` to prevent memory leaks
+
+---
+
+## Complete Example
+
+### Basic Logging
+
+```typescript
+import { toggleNativeLog, addNativeLogListener } from 'whisper.rn'
+
+// Add listener before enabling logs
+const subscription = addNativeLogListener((level, text) => {
+  console.log(`[WHISPER ${level.toUpperCase()}] ${text}`)
+})
+
+// Enable native logging
+await toggleNativeLog(true)
+
+// ... use whisper.rn ...
+
+// Clean up
+subscription.remove()
+await toggleNativeLog(false)
+```
+
+---
+
+### Filtering Log Levels
+
+```typescript
+import { addNativeLogListener } from 'whisper.rn'
+
+const subscription = addNativeLogListener((level, text) => {
+  switch (level) {
+    case 'error':
+      console.error('Whisper error:', text)
+      break
+    case 'warn':
+      console.warn('Whisper warning:', text)
+      break
+    case 'info':
+      console.info('Whisper info:', text)
+      break
+    default:
+      console.log(`Whisper [${level}]:`, text)
+  }
+})
+```
+
+---
+
+### Collecting Logs for Debugging
+
+```typescript
+import { toggleNativeLog, addNativeLogListener } from 'whisper.rn'
+
+const logs: Array<{ level: string; text: string; timestamp: number }> = []
+
+const subscription = addNativeLogListener((level, text) => {
+  logs.push({
+    level,
+    text,
+    timestamp: Date.now()
+  })
+  
+  // Keep only last 100 logs
+  if (logs.length > 100) {
+    logs.shift()
+  }
+})
+
+await toggleNativeLog(true)
+
+// ... use whisper.rn ...
+
+// Export logs for debugging
+const exportLogs = () => {
+  return logs.map(log => 
+    `[${new Date(log.timestamp).toISOString()}] [${log.level}] ${log.text}`
+  ).join('\n')
+}
+
+console.log(exportLogs())
+```
+
+---
+
+### Multiple Listeners
+
+```typescript
+import { addNativeLogListener } from 'whisper.rn'
+
+// Listener 1: Console output
+const consoleListener = addNativeLogListener((level, text) => {
+  console.log(`[${level}] ${text}`)
+})
+
+// Listener 2: Error tracking
+const errorListener = addNativeLogListener((level, text) => {
+  if (level === 'error') {
+    // Send to error tracking service
+    trackError(text)
+  }
+})
+
+// Listener 3: Performance monitoring
+const perfListener = addNativeLogListener((level, text) => {
+  if (text.includes('processing time')) {
+    // Extract and track performance metrics
+    trackPerformance(text)
+  }
+})
+
+// Clean up all listeners
+const cleanup = () => {
+  consoleListener.remove()
+  errorListener.remove()
+  perfListener.remove()
+}
+```
+
+---
+
+## Use Cases
+
+### Development Debugging
+
+Enable logging during development to see what's happening inside whisper.cpp:
+
+```typescript
+if (__DEV__) {
+  const sub = addNativeLogListener((level, text) => {
+    console.log(`[WHISPER] ${text}`)
+  })
+  await toggleNativeLog(true)
+}
+```
+
+---
+
+### Production Error Tracking
+
+Capture only errors in production:
+
+```typescript
+import { addNativeLogListener } from 'whisper.rn'
+import * as Sentry from '@sentry/react-native'
+
+const subscription = addNativeLogListener((level, text) => {
+  if (level === 'error') {
+    Sentry.captureMessage(`Whisper error: ${text}`, 'error')
+  }
+})
+```
+
+---
+
+### Performance Monitoring
+
+Track transcription performance:
+
+```typescript
+const subscription = addNativeLogListener((level, text) => {
+  // whisper.cpp logs processing times
+  const timeMatch = text.match(/(\d+\.\d+)\s*ms/)
+  if (timeMatch) {
+    const processingTime = parseFloat(timeMatch[1])
+    analytics.track('transcription_time', { ms: processingTime })
+  }
+})
+```
+
+---
+
+## Platform Support
+
+- **iOS**: Full support
+- **Android**: Full support
+
+---
+
+## See Also
+
+- [initWhisper()](/api-reference/init-whisper) - Initialize Whisper context
+- [initWhisperVad()](/api-reference/init-whisper-vad) - Initialize VAD context

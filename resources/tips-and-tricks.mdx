@@ -1,0 +1,507 @@
+---
+title: Tips & Tricks
+description: Best practices and optimization tips for whisper.rn
+---
+
+This guide provides best practices and optimization tips to help you get the most out of whisper.rn.
+
+## Model Selection
+
+### Choose the right model size
+
+<Note>
+Model selection is a balance between accuracy, speed, and memory usage. Choose based on your device capabilities and accuracy requirements.
+</Note>
+
+Refer to the [Memory Usage](https://github.com/ggerganov/whisper.cpp#memory-usage) table in whisper.cpp for detailed information.
+
+**Model size guidelines:**
+
+- **tiny** - Fastest, lowest memory (~75MB), acceptable accuracy for simple use cases
+- **base** - Good balance for most mobile devices (~145MB)
+- **small** - Better accuracy, moderate resource usage (~475MB)
+- **medium** - High accuracy, requires more resources (~1.5GB)
+- **large** - Best accuracy, only for high-end devices (~3GB)
+
+**Dynamic model selection:**
+
+You can detect device capabilities and select models accordingly:
+
+```typescript
+import DeviceInfo from 'react-native-device-info'
+
+async function selectModel() {
+  const totalMemory = await DeviceInfo.getTotalMemory()
+  const isTablet = await DeviceInfo.isTablet()
+  
+  // Select model based on available memory
+  if (totalMemory > 6 * 1024 * 1024 * 1024) { // > 6GB
+    return require('./models/ggml-medium.bin')
+  } else if (totalMemory > 4 * 1024 * 1024 * 1024) { // > 4GB
+    return require('./models/ggml-small.bin')
+  } else if (totalMemory > 2 * 1024 * 1024 * 1024) { // > 2GB
+    return require('./models/ggml-base.bin')
+  }
+  return require('./models/ggml-tiny.bin')
+}
+
+const modelPath = await selectModel()
+const context = await initWhisper({ filePath: modelPath })
+```
+
+<Warning>
+Libraries like [react-native-vitals](https://github.com/robinpowered/react-native-vitals) are currently unmaintained. Use [react-native-device-info](https://github.com/react-native-device-info/react-native-device-info) instead.
+</Warning>
+
+### Use quantized models
+
+<Note>
+Quantized models reduce size and memory usage, often with minimal accuracy loss. On some Android devices, they're actually **faster** than full-precision models.
+</Note>
+
+Using a [quantized model](https://github.com/ggerganov/whisper.cpp#quantization) can:
+- Decrease memory usage by 50-75%
+- Reduce disk space requirements
+- Improve inference speed on certain hardware
+
+**Quantization levels:**
+
+- **q8** - 8-bit quantization, minimal accuracy loss, ~50% size reduction
+- **q5_0/q5_1** - 5-bit quantization, good accuracy, ~60% size reduction
+- **q4_0/q4_1** - 4-bit quantization, more accuracy loss, ~75% size reduction
+
+**Performance note:**
+
+In our tests, the **q8 model showed performance improvements** on Android devices with:
+- Qualcomm Snapdragon SoCs
+- Google Tensor SoCs
+
+**Usage:**
+
+```typescript
+const context = await initWhisper({
+  filePath: require('./models/ggml-base.en-q8_0.bin'),
+  useGpu: true,
+})
+```
+
+Download quantized models from the [whisper.cpp models repository](https://huggingface.co/ggerganov/whisper.cpp).
+
+## Performance Optimization
+
+### Optimize thread count
+
+<Note>
+The default thread configuration is optimal for most devices based on extensive testing. Only adjust if you have specific performance requirements.
+</Note>
+
+**Default behavior:**
+- 4-core devices: 2 threads
+- 5+ core devices: 4 threads
+
+This configuration is optimized based on tests across numerous mobile devices.
+
+**Custom thread count:**
+
+```typescript
+const result = await context.transcribe(audioPath, {
+  maxThreads: 4, // Customize if needed
+})
+```
+
+<Warning>
+**Not recommended:**
+- Using all CPU cores (causes thermal throttling and battery drain)
+- Using fewer than 2 threads (poor performance)
+- Setting `maxThreads > 4` on mobile devices
+</Warning>
+
+### Enable GPU acceleration
+
+GPU/Metal acceleration can significantly improve performance on iOS:
+
+```typescript
+const context = await initWhisper({
+  filePath: modelPath,
+  useGpu: true, // Default: true
+})
+
+// Check if GPU is actually being used
+if (context.gpu) {
+  console.log('✅ GPU acceleration active')
+} else {
+  console.log('⚠️  GPU not available:', context.reasonNoGPU)
+}
+```
+
+**GPU availability:**
+- **iOS**: Metal acceleration (iOS 11.0+)
+- **Android**: Currently not supported
+
+### Use Core ML on iOS
+
+Core ML can accelerate the encoder on iOS 15.0+:
+
+```typescript
+const context = await initWhisper({
+  filePath: require('./models/ggml-base.en.bin'),
+  useCoreMLIos: true, // Default: true
+  coreMLModelAsset: {
+    filename: 'ggml-base.en-encoder.mlmodelc',
+    assets: [
+      require('./models/ggml-base.en-encoder.mlmodelc/weights/weight.bin'),
+      require('./models/ggml-base.en-encoder.mlmodelc/model.mil'),
+      require('./models/ggml-base.en-encoder.mlmodelc/coremldata.bin'),
+    ],
+  },
+})
+```
+
+See [Core ML Models](/core-concepts/models#core-ml-models) for details.
+
+### Test in Release mode
+
+<Warning>
+**Always benchmark in Release mode!** Debug builds can be 10-100x slower than release builds.
+</Warning>
+
+```bash
+# iOS
+yarn ios --mode Release
+
+# Android
+yarn android --mode release
+```
+
+Debug builds include:
+- Extra logging and debugging symbols
+- No compiler optimizations
+- Development-time checks
+- Slower JavaScript execution
+
+### Benchmark your configuration
+
+Use the built-in benchmark to test different configurations:
+
+```typescript
+const benchResult = await context.bench(4) // Test with 4 threads
+
+console.log('Benchmark results:', {
+  encodeMs: benchResult.encodeMs,
+  decodeMs: benchResult.decodeMs,
+  threads: benchResult.nThreads,
+  config: benchResult.config,
+})
+```
+
+Compare different models, thread counts, and GPU settings to find optimal configuration for your use case.
+
+## Audio Processing Tips
+
+### Pre-process audio for better accuracy
+
+For best transcription results:
+
+1. **Ensure correct format**: 16kHz, mono, 16-bit PCM
+2. **Reduce background noise**: Use noise reduction if possible
+3. **Normalize volume**: Consistent audio levels improve accuracy
+4. **Remove silence**: Trim leading/trailing silence
+
+```typescript
+// Example: Convert with ffmpeg before transcription
+// ffmpeg -i input.mp3 -ar 16000 -ac 1 -sample_fmt s16 output.wav
+
+const result = await context.transcribe(outputWavPath)
+```
+
+### Use appropriate language models
+
+For better accuracy, use language-specific models when possible:
+
+```typescript
+// English-only model (smaller, faster for English)
+const contextEn = await initWhisper({
+  filePath: require('./models/ggml-base.en.bin'),
+})
+
+// Multilingual model (supports 99+ languages)
+const contextMulti = await initWhisper({
+  filePath: require('./models/ggml-base.bin'),
+})
+
+const result = await contextEn.transcribe(audioPath, {
+  language: 'en', // Specify language when known
+})
+```
+
+### Optimize realtime transcription
+
+<Accordion title="Configure slice duration">
+```typescript
+const transcriber = new RealtimeTranscriber(
+  { whisperContext, vadContext, audioStream },
+  {
+    audioSliceSec: 30, // Match whisper.cpp's 30-second chunks
+    audioMinSec: 1,    // Minimum audio before transcribing
+  }
+)
+```
+
+The 30-second slice duration aligns with whisper.cpp's internal processing, providing optimal performance.
+</Accordion>
+
+<Accordion title="Use VAD for better speech detection">
+```typescript
+import { initWhisperVad } from 'whisper.rn'
+
+const vadContext = await initWhisperVad({
+  filePath: require('./models/silero_vad.onnx'),
+})
+
+const transcriber = new RealtimeTranscriber(
+  { whisperContext, vadContext, audioStream },
+  { /* options */ }
+)
+```
+
+VAD (Voice Activity Detection) automatically detects speech and triggers transcription, reducing unnecessary processing.
+</Accordion>
+
+<Accordion title="Control memory usage">
+```typescript
+const transcriber = new RealtimeTranscriber(
+  { whisperContext, vadContext, audioStream },
+  {
+    maxSlicesInMemory: 3, // Keep only last 3 slices (90 seconds)
+  },
+  {
+    onStats: (stats) => {
+      // Monitor memory usage
+      console.log('Memory:', stats.memoryUsage)
+    },
+  }
+)
+```
+
+Limit slices in memory to prevent memory issues during long transcription sessions.
+</Accordion>
+
+## Development Best Practices
+
+### Always release contexts
+
+<Warning>
+Failing to release contexts causes memory leaks. Always clean up when done.
+</Warning>
+
+```typescript
+// Option 1: Release individual contexts
+try {
+  const result = await context.transcribe(audioPath)
+  // Process result...
+} finally {
+  await context.release()
+  await vadContext?.release()
+}
+
+// Option 2: Release all contexts
+import { releaseAllWhisper, releaseAllWhisperVad } from 'whisper.rn'
+
+await releaseAllWhisper()
+await releaseAllWhisperVad()
+```
+
+### Use transcription callbacks
+
+Monitor progress and get early results:
+
+```typescript
+const { promise, stop } = context.transcribe(audioPath, {
+  onProgress: (progress) => {
+    console.log(`Progress: ${progress}%`)
+    // Update UI progress bar
+  },
+  onNewSegments: ({ result, segments, nNew }) => {
+    console.log(`New segments: ${nNew}`)
+    console.log('Partial result:', result)
+    // Show partial transcription in real-time
+  },
+})
+
+const result = await promise
+```
+
+### Handle errors gracefully
+
+```typescript
+try {
+  const context = await initWhisper({ filePath: modelPath })
+  
+  try {
+    const result = await context.transcribe(audioPath)
+    // Process result...
+  } catch (transcribeError) {
+    console.error('Transcription failed:', transcribeError)
+    // Handle transcription error
+  } finally {
+    await context.release()
+  }
+} catch (initError) {
+  console.error('Failed to initialize:', initError)
+  // Handle initialization error (e.g., model not found)
+}
+```
+
+### Use TypeScript for better DX
+
+whisper.rn is written in TypeScript with full type definitions:
+
+```typescript
+import type {
+  WhisperContext,
+  TranscribeResult,
+  TranscribeOptions,
+} from 'whisper.rn'
+
+const options: TranscribeOptions = {
+  language: 'en',
+  maxThreads: 4,
+  maxLen: 1,
+  // TypeScript will autocomplete and validate options
+}
+```
+
+## Storage and Caching
+
+### Cache downloaded models
+
+```typescript
+import RNFS from 'react-native-fs'
+
+const MODEL_URL = 'https://example.com/ggml-base.en.bin'
+const MODEL_PATH = `${RNFS.DocumentDirectoryPath}/ggml-base.en.bin`
+
+async function getOrDownloadModel() {
+  // Check if model already exists
+  const exists = await RNFS.exists(MODEL_PATH)
+  
+  if (!exists) {
+    console.log('Downloading model...')
+    await RNFS.downloadFile({
+      fromUrl: MODEL_URL,
+      toFile: MODEL_PATH,
+      progressDivider: 10,
+      progress: (res) => {
+        const progress = (res.bytesWritten / res.contentLength) * 100
+        console.log(`Download progress: ${progress.toFixed(1)}%`)
+      },
+    }).promise
+  }
+  
+  return MODEL_PATH
+}
+
+const modelPath = await getOrDownloadModel()
+const context = await initWhisper({ filePath: modelPath })
+```
+
+### Manage model updates
+
+```typescript
+const MODEL_VERSION = '1.0.0'
+const VERSION_KEY = 'model_version'
+
+async function shouldUpdateModel() {
+  const storedVersion = await AsyncStorage.getItem(VERSION_KEY)
+  return storedVersion !== MODEL_VERSION
+}
+
+if (await shouldUpdateModel()) {
+  // Download new model
+  const newModelPath = await downloadModel()
+  await AsyncStorage.setItem(VERSION_KEY, MODEL_VERSION)
+}
+```
+
+## Platform-Specific Tips
+
+### iOS
+
+<Accordion title="Configure audio session properly">
+```typescript
+import { AudioSessionIos } from 'whisper.rn'
+
+// Before recording
+await AudioSessionIos.setCategory('playAndRecord', [
+  'defaultToSpeaker',
+  'allowBluetooth',
+])
+await AudioSessionIos.setActive(true)
+
+// After recording
+await AudioSessionIos.setActive(false)
+```
+
+Proper audio session configuration prevents conflicts with other audio apps.
+</Accordion>
+
+<Accordion title="Use prebuilt frameworks for faster builds">
+By default, whisper.rn uses prebuilt frameworks. This significantly speeds up iOS builds.
+
+To build from source (if needed):
+```ruby
+# Podfile
+ENV['RNWHISPER_BUILD_FROM_SOURCE'] = '1'
+```
+</Accordion>
+
+### Android
+
+<Accordion title="Configure ProGuard rules">
+Always add ProGuard rules to prevent code stripping:
+
+```proguard
+# android/app/proguard-rules.pro
+-keep class com.rnwhisper.** { *; }
+```
+</Accordion>
+
+<Accordion title="Handle Android 15+ (16KB page sizes)">
+whisper.rn supports Android 15's 16KB page size requirement out of the box. No additional configuration needed.
+</Accordion>
+
+## Testing and Debugging
+
+### Enable native logging
+
+```typescript
+import { toggleNativeLog, addNativeLogListener } from 'whisper.rn'
+
+// Enable native logs
+await toggleNativeLog(true)
+
+// Listen to native logs
+const listener = addNativeLogListener((level, text) => {
+  console.log(`[Native ${level}]`, text)
+})
+
+// Later: disable and cleanup
+listener.remove()
+await toggleNativeLog(false)
+```
+
+### Test with different audio samples
+
+Test your implementation with various audio conditions:
+- Clear speech vs. noisy environment
+- Different accents and speakers
+- Various audio lengths (short clips to long recordings)
+- Background music or multiple speakers
+
+This helps identify edge cases and optimize your configuration.
+
+## Additional Resources
+
+- [whisper.cpp Performance Guide](https://github.com/ggerganov/whisper.cpp#performance)
+- [Model Quality Comparison](https://github.com/ggerganov/whisper.cpp#quality-comparison)
+- [Whisper Paper](https://arxiv.org/abs/2212.04356) - Original research paper

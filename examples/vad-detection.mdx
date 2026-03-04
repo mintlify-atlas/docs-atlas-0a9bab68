@@ -1,0 +1,402 @@
+---
+title: 'Voice Activity Detection'
+description: 'Detect speech segments in audio using Silero VAD'
+icon: 'waveform-lines'
+---
+
+Voice Activity Detection (VAD) identifies speech segments in audio files, filtering out silence and background noise. whisper.rn integrates the Silero VAD model for accurate speech detection.
+
+## Overview
+
+VAD is useful for:
+- Pre-processing audio before transcription
+- Splitting long audio into speech segments
+- Reducing transcription costs by skipping silence
+- Improving transcription accuracy
+
+## Quick Start
+
+<Steps>
+  <Step title="Initialize VAD Context">
+    First, initialize a VAD context with the Silero VAD model:
+
+    <CodeGroup>
+    ```typescript Using Bundled Asset
+    import { initWhisperVad } from 'whisper.rn';
+
+    const vadContext = await initWhisperVad({
+      filePath: require('../assets/ggml-silero-v6.2.0.bin'),
+      useGpu: true,
+      nThreads: 4,
+    });
+
+    console.log('VAD model loaded, ID:', vadContext.id);
+    ```
+
+    ```typescript Download Model
+    import { initWhisperVad } from 'whisper.rn';
+    import RNFS from 'react-native-fs';
+
+    const modelUrl = 'https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v6.2.0.bin';
+    const modelPath = `${RNFS.DocumentDirectoryPath}/ggml-silero-v6.2.0.bin`;
+
+    await RNFS.downloadFile({
+      fromUrl: modelUrl,
+      toFile: modelPath,
+    }).promise;
+
+    const vadContext = await initWhisperVad({
+      filePath: modelPath,
+      useGpu: true,
+      nThreads: 4,
+    });
+    ```
+    </CodeGroup>
+
+    <Tip>
+      The Silero VAD model is only ~350KB, much smaller than Whisper models.
+    </Tip>
+  </Step>
+
+  <Step title="Detect Speech in Audio">
+    Use `detectSpeech()` to find speech segments in an audio file:
+
+    ```typescript
+    const sampleFile = require('../assets/jfk.wav');
+
+    const segments = await vadContext.detectSpeech(sampleFile, {
+      threshold: 0.5,
+      minSpeechDurationMs: 250,
+      minSilenceDurationMs: 100,
+      maxSpeechDurationS: 30,
+      speechPadMs: 30,
+    });
+
+    console.log(`Detected ${segments.length} speech segments`);
+    segments.forEach((segment, i) => {
+      console.log(`Segment ${i + 1}: ${segment.t0}ms - ${segment.t1}ms`);
+    });
+    ```
+  </Step>
+
+  <Step title="Process Results">
+    Each segment contains start and end timestamps in centiseconds (10ms units):
+
+    ```typescript
+    function toTimestamp(t: number) {
+      let msec = t * 10;
+      const hr = Math.floor(msec / (1000 * 60 * 60));
+      msec -= hr * (1000 * 60 * 60);
+      const min = Math.floor(msec / (1000 * 60));
+      msec -= min * (1000 * 60);
+      const sec = Math.floor(msec / 1000);
+      msec -= sec * 1000;
+
+      return `${String(hr).padStart(2, '0')}:${String(min).padStart(2, '0')}:${String(sec).padStart(2, '0')}.${String(msec).padStart(3, '0')}`;
+    }
+
+    segments.forEach((segment, i) => {
+      const duration = (segment.t1 - segment.t0) / 100; // Convert to seconds
+      console.log(
+        `${i + 1}. [${toTimestamp(segment.t0)} --> ${toTimestamp(segment.t1)}] ` +
+        `Duration: ${duration.toFixed(2)}s`
+      );
+    });
+    ```
+  </Step>
+
+  <Step title="Clean Up">
+    Release the VAD context when done:
+
+    ```typescript
+    await vadContext.release();
+    ```
+  </Step>
+</Steps>
+
+## VAD Configuration Options
+
+The `detectSpeech()` method supports several options to tune detection sensitivity:
+
+### Default Settings
+
+```typescript
+const segments = await vadContext.detectSpeech(audioFile, {
+  threshold: 0.5,              // Speech probability threshold (0.0 - 1.0)
+  minSpeechDurationMs: 250,    // Minimum speech duration to keep
+  minSilenceDurationMs: 100,   // Minimum silence to split segments
+  maxSpeechDurationS: 30,      // Maximum segment length
+  speechPadMs: 30,             // Padding around speech segments
+  samplesOverlap: 0.1,         // Sample overlap ratio
+});
+```
+
+### Sensitive Detection
+
+For detecting quiet or short speech:
+
+```typescript
+const segments = await vadContext.detectSpeech(audioFile, {
+  threshold: 0.3,              // Lower threshold = more sensitive
+  minSpeechDurationMs: 100,    // Detect shorter utterances
+  minSilenceDurationMs: 50,    // Less silence required to split
+  maxSpeechDurationS: 15,      // Shorter max segments
+  speechPadMs: 50,             // More padding for safety
+  samplesOverlap: 0.2,         // More overlap for accuracy
+});
+```
+
+### Conservative Detection
+
+For reducing false positives:
+
+```typescript
+const segments = await vadContext.detectSpeech(audioFile, {
+  threshold: 0.7,              // Higher threshold = less sensitive
+  minSpeechDurationMs: 500,    // Only longer speech segments
+  minSilenceDurationMs: 200,   // More silence required to split
+  maxSpeechDurationS: 60,      // Longer max segments
+  speechPadMs: 10,             // Minimal padding
+  samplesOverlap: 0.05,        // Less overlap
+});
+```
+
+## Complete Example
+
+Here's a complete component with VAD detection:
+
+```typescript Complete VAD Example
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { View, Text, Button, ScrollView } from 'react-native';
+import { initWhisperVad } from 'whisper.rn';
+import type { WhisperVadContext, VadSegment } from 'whisper.rn';
+
+const sampleFile = require('../assets/jfk.wav');
+
+export default function VadDetection() {
+  const vadContextRef = useRef<WhisperVadContext | null>(null);
+  const [logs, setLogs] = useState<string[]>([]);
+  const [segments, setSegments] = useState<VadSegment[]>([]);
+
+  const log = useCallback((...messages: any[]) => {
+    setLogs((prev) => [...prev, messages.join(' ')]);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      vadContextRef.current?.release();
+    };
+  }, []);
+
+  const initialize = async () => {
+    if (vadContextRef.current) {
+      await vadContextRef.current.release();
+      log('Released previous VAD context');
+    }
+
+    log('Initializing VAD...');
+    const startTime = Date.now();
+    const ctx = await initWhisperVad({
+      filePath: require('../assets/ggml-silero-v6.2.0.bin'),
+      useGpu: true,
+      nThreads: 4,
+    });
+    const endTime = Date.now();
+    
+    log(`VAD loaded in ${endTime - startTime}ms`);
+    vadContextRef.current = ctx;
+  };
+
+  const detectSpeech = async (preset: 'default' | 'sensitive' | 'conservative') => {
+    if (!vadContextRef.current) {
+      log('VAD not initialized');
+      return;
+    }
+
+    const options = {
+      default: {
+        threshold: 0.5,
+        minSpeechDurationMs: 250,
+        minSilenceDurationMs: 100,
+        maxSpeechDurationS: 30,
+        speechPadMs: 30,
+        samplesOverlap: 0.1,
+      },
+      sensitive: {
+        threshold: 0.3,
+        minSpeechDurationMs: 100,
+        minSilenceDurationMs: 50,
+        maxSpeechDurationS: 15,
+        speechPadMs: 50,
+        samplesOverlap: 0.2,
+      },
+      conservative: {
+        threshold: 0.7,
+        minSpeechDurationMs: 500,
+        minSilenceDurationMs: 200,
+        maxSpeechDurationS: 60,
+        speechPadMs: 10,
+        samplesOverlap: 0.05,
+      },
+    }[preset];
+
+    log(`Detecting speech (${preset} mode)...`);
+    const startTime = Date.now();
+    
+    const detectedSegments = await vadContextRef.current.detectSpeech(
+      sampleFile,
+      options
+    );
+    
+    const endTime = Date.now();
+    log(`Found ${detectedSegments.length} segments in ${endTime - startTime}ms`);
+    setSegments(detectedSegments);
+  };
+
+  return (
+    <ScrollView style={{ padding: 20 }}>
+      <Button title="Initialize VAD" onPress={initialize} />
+      
+      <View style={{ marginTop: 10 }}>
+        <Button 
+          title="Detect (Default)" 
+          onPress={() => detectSpeech('default')}
+          disabled={!vadContextRef.current}
+        />
+        <Button 
+          title="Detect (Sensitive)" 
+          onPress={() => detectSpeech('sensitive')}
+          disabled={!vadContextRef.current}
+        />
+        <Button 
+          title="Detect (Conservative)" 
+          onPress={() => detectSpeech('conservative')}
+          disabled={!vadContextRef.current}
+        />
+      </View>
+
+      <View style={{ marginTop: 20 }}>
+        <Text>Logs:</Text>
+        {logs.map((log, i) => (
+          <Text key={i}>{log}</Text>
+        ))}
+      </View>
+
+      {segments.length > 0 && (
+        <View style={{ marginTop: 20 }}>
+          <Text>Detected Speech Segments:</Text>
+          {segments.map((segment, i) => {
+            const duration = ((segment.t1 - segment.t0) / 100).toFixed(2);
+            return (
+              <Text key={i}>
+                {i + 1}. {segment.t0}ms - {segment.t1}ms ({duration}s)
+              </Text>
+            );
+          })}
+        </View>
+      )}
+    </ScrollView>
+  );
+}
+```
+
+## Using VAD with Recorded Audio
+
+You can also detect speech in recorded audio data:
+
+```typescript
+import { Buffer } from 'buffer';
+import LiveAudioStream from '@fugood/react-native-audio-pcm-stream';
+
+// Record audio
+const recordedData = new Uint8Array(); // Your recorded PCM data
+
+// Convert to base64
+const base64Data = Buffer.from(recordedData).toString('base64');
+
+// Detect speech in recorded data
+const segments = await vadContext.detectSpeechData(base64Data, {
+  threshold: 0.5,
+  minSpeechDurationMs: 250,
+  minSilenceDurationMs: 100,
+  maxSpeechDurationS: 30,
+  speechPadMs: 30,
+  samplesOverlap: 0.1,
+});
+
+console.log(`Detected ${segments.length} speech segments in recorded audio`);
+```
+
+## VAD + Transcription Workflow
+
+Combine VAD with transcription for efficient processing:
+
+```typescript
+import { initWhisper, initWhisperVad } from 'whisper.rn';
+
+// Initialize both contexts
+const whisperCtx = await initWhisper({
+  filePath: require('../assets/ggml-base.bin'),
+});
+
+const vadCtx = await initWhisperVad({
+  filePath: require('../assets/ggml-silero-v6.2.0.bin'),
+  useGpu: true,
+  nThreads: 4,
+});
+
+// Detect speech segments
+const segments = await vadCtx.detectSpeech(audioFile, {
+  threshold: 0.5,
+  minSpeechDurationMs: 250,
+  minSilenceDurationMs: 100,
+});
+
+if (segments.length === 0) {
+  console.log('No speech detected');
+} else {
+  // Transcribe the full audio (VAD results can guide post-processing)
+  const { promise } = whisperCtx.transcribe(audioFile, {
+    language: 'en',
+  });
+  
+  const { result } = await promise;
+  console.log('Transcription:', result);
+  console.log(`Speech detected in ${segments.length} segments`);
+}
+
+// Cleanup
+await vadCtx.release();
+await whisperCtx.release();
+```
+
+## Performance Tips
+
+<Tip>
+  **Model Size**: The Silero VAD model is only ~350KB and loads very quickly.
+</Tip>
+
+<Tip>
+  **GPU Acceleration**: Enable `useGpu: true` for faster processing on iOS devices.
+</Tip>
+
+<Tip>
+  **Thread Count**: Use 4 threads for optimal VAD performance on most devices.
+</Tip>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Realtime Streaming" icon="microphone" href="/examples/realtime-streaming">
+    Use VAD with realtime transcription for automatic speech detection
+  </Card>
+  <Card title="Basic Transcription" icon="file-audio" href="/examples/basic-transcription">
+    Learn basic audio file transcription
+  </Card>
+  <Card title="File Handling" icon="file" href="/examples/file-handling">
+    Work with different audio formats and data sources
+  </Card>
+  <Card title="API Reference" icon="code" href="/api-reference/vad-context">
+    Full API documentation for WhisperVadContext
+  </Card>
+</CardGroup>

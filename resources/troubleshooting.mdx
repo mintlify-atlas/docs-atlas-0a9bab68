@@ -1,0 +1,380 @@
+---
+title: Troubleshooting
+description: Common issues and solutions for whisper.rn
+---
+
+This guide covers common issues you might encounter while using whisper.rn and their solutions.
+
+## Build Issues
+
+### Android: Unknown host CPU architecture on Apple Silicon Macs
+
+<Warning>
+This error typically occurs when building Android apps on Apple Silicon (M1/M2/M3) Macs with older NDK versions.
+</Warning>
+
+If you encounter the build error `Unknown host CPU architecture: arm64` when building for Android on Apple Silicon Macs, use one of these solutions:
+
+<Accordion title="Solution 1: Update NDK Version (Recommended)">
+**Update to NDK version 24.0.8215888 or above**
+
+This is the recommended solution. Update your NDK version in `android/local.properties` or Android Studio:
+
+```properties
+ndk.dir=/Users/username/Library/Android/sdk/ndk/24.0.8215888
+```
+
+Or install via Android Studio:
+1. Open Android Studio > Settings/Preferences
+2. Navigate to Appearance & Behavior > System Settings > Android SDK
+3. Click on "SDK Tools" tab
+4. Check "Show Package Details"
+5. Find "NDK (Side by side)" and install version 24.0.8215888 or newer
+</Accordion>
+
+<Accordion title="Solution 2: Modify ndk-build Script (Alternative)">
+If you cannot change the NDK version, you can modify the `ndk-build` script to run under x86_64 architecture.
+
+Edit `~/Library/Android/sdk/ndk/23.1.7779620/ndk-build`:
+
+```bash
+#!/bin/sh
+DIR="$(cd "$(dirname "$0")" && pwd)"
+arch -x86_64 /bin/bash $DIR/build/ndk-build "$@"
+```
+
+<Note>
+This workaround runs the NDK build under Rosetta 2 translation, which may be slower than using a native ARM64-compatible NDK version.
+</Note>
+</Accordion>
+
+### iOS: Build fails with Core ML errors
+
+If you encounter Core ML-related build errors on iOS:
+
+<Steps>
+1. **Disable Core ML if not needed**
+   
+   Add this to your Podfile before `use_react_native!`:
+   ```ruby
+   ENV['RNWHISPER_DISABLE_COREML'] = '1'
+   ```
+
+2. **Clean build folder**
+   ```bash
+   cd ios
+   rm -rf Pods Podfile.lock build
+   pod install
+   ```
+
+3. **Rebuild the app**
+   ```bash
+   cd ..
+   yarn ios
+   ```
+</Steps>
+
+### iOS: Xcode build errors after updating
+
+<Accordion title="Clean Xcode derived data">
+Xcode sometimes caches old build artifacts. Clean them:
+
+```bash
+rm -rf ~/Library/Developer/Xcode/DerivedData
+cd ios
+rm -rf Pods Podfile.lock
+pod install
+```
+
+Then rebuild your app.
+</Accordion>
+
+### Build from source instead of prebuilt framework
+
+By default, whisper.rn uses a prebuilt `rnwhisper.xcframework` for iOS. To build from source:
+
+Add this to your Podfile **before** `use_react_native!`:
+
+```ruby
+ENV['RNWHISPER_BUILD_FROM_SOURCE'] = '1'
+```
+
+Then reinstall pods:
+
+```bash
+cd ios
+rm -rf Pods Podfile.lock
+pod install
+```
+
+## Runtime Issues
+
+### App crashes with large models
+
+<Warning>
+Large models (medium, large) require significant memory and may crash on devices with limited RAM.
+</Warning>
+
+**Solutions:**
+
+1. **Use quantized models** - They use less memory with minimal accuracy loss. See [Model Formats](/core-concepts/models#quantization) for details.
+
+2. **iOS: Enable Extended Virtual Addressing**
+   
+   For large models on iOS, add this entitlement to your app:
+   
+   In Xcode: Signing & Capabilities > App Sandbox > Hardware > Extended Virtual Addressing
+   
+   Or add to your entitlements file:
+   ```xml
+   <key>com.apple.developer.kernel.extended-virtual-addressing</key>
+   <true/>
+   ```
+
+3. **Reduce model size** - Use a smaller model like `tiny`, `base`, or `small` instead of `medium` or `large`.
+
+### Transcription is slow
+
+<Accordion title="Check your build configuration">
+Make sure you're testing in **Release mode**, not Debug mode:
+
+```bash
+# iOS
+yarn ios --mode Release
+
+# Android  
+yarn android --mode release
+```
+
+Debug builds are significantly slower than release builds.
+</Accordion>
+
+<Accordion title="Verify GPU/Metal acceleration">
+Check if GPU acceleration is active:
+
+```typescript
+const context = await initWhisper({
+  filePath: modelPath,
+  useGpu: true, // Should be true (default)
+})
+
+console.log('GPU enabled:', context.gpu)
+if (!context.gpu) {
+  console.log('Reason:', context.reasonNoGPU)
+}
+```
+
+iOS uses Metal acceleration by default if available.
+</Accordion>
+
+<Accordion title="Optimize thread count">
+The default thread count (2 for 4-core devices, 4 for more cores) is optimal for most devices, but you can experiment:
+
+```typescript
+const result = await context.transcribe(audioPath, {
+  maxThreads: 4, // Try different values
+})
+```
+
+<Note>
+Do not use all CPU cores or fewer than 2 threads. This typically degrades performance.
+</Note>
+</Accordion>
+
+### Microphone permission issues
+
+**iOS:**
+
+Add microphone usage description to `ios/YourApp/Info.plist`:
+
+```xml
+<key>NSMicrophoneUsageDescription</key>
+<string>This app needs microphone access for speech transcription</string>
+```
+
+**Android:**
+
+1. Add permission to `android/app/src/main/AndroidManifest.xml`:
+   ```xml
+   <uses-permission android:name="android.permission.RECORD_AUDIO" />
+   ```
+
+2. Request permission at runtime:
+   ```typescript
+   import { PermissionsAndroid, Platform } from 'react-native'
+
+   if (Platform.OS === 'android') {
+     const granted = await PermissionsAndroid.request(
+       PermissionsAndroid.PERMISSIONS.RECORD_AUDIO
+     )
+     if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
+       console.error('Microphone permission denied')
+       return
+     }
+   }
+   ```
+
+### JSI binding errors
+
+<Warning>
+If you see errors like "JSI binding not installed", ensure you're calling `initWhisper()` or `initWhisperVad()` before using ArrayBuffer methods.
+</Warning>
+
+JSI bindings are automatically installed when you initialize a context:
+
+```typescript
+// This installs JSI bindings
+const whisperContext = await initWhisper({ filePath: modelPath })
+const vadContext = await initWhisperVad({ filePath: vadModelPath })
+
+// Now you can use ArrayBuffer methods
+await whisperContext.transcribeData(arrayBuffer)
+await vadContext.detectSpeechData(arrayBuffer)
+```
+
+### Audio format errors
+
+<Warning>
+Whisper requires specific audio format: 16kHz sample rate, mono (1 channel), 16-bit PCM.
+</Warning>
+
+If transcription fails or produces poor results, verify your audio format:
+
+```typescript
+// Correct format for whisper
+const audioConfig = {
+  sampleRate: 16000,  // Must be 16kHz
+  channels: 1,        // Must be mono
+  bitsPerSample: 16,  // Must be 16-bit
+}
+```
+
+For WAV files, you can use ffmpeg to convert:
+
+```bash
+ffmpeg -i input.wav -ar 16000 -ac 1 -sample_fmt s16 output.wav
+```
+
+## Asset Loading Issues
+
+### Model file not found
+
+**For bundled assets:**
+
+1. Add file extensions to Metro config (`metro.config.js`):
+   ```javascript
+   module.exports = {
+     resolver: {
+       assetExts: ['bin', 'mil', 'wav', 'mp3'],
+     },
+   }
+   ```
+
+2. Use `require()` to load bundled models:
+   ```typescript
+   const context = await initWhisper({
+     filePath: require('../assets/ggml-base.en.bin'),
+   })
+   ```
+
+**For file system paths:**
+
+```typescript
+import RNFS from 'react-native-fs'
+
+const modelPath = `${RNFS.DocumentDirectoryPath}/ggml-base.en.bin`
+const context = await initWhisper({ filePath: modelPath })
+```
+
+### Large model files fail to bundle
+
+<Warning>
+React Native packager has a ~2GB file size limit for bundled assets.
+</Warning>
+
+For large models:
+
+1. **Download at runtime** instead of bundling:
+   ```typescript
+   import RNFS from 'react-native-fs'
+
+   const modelUrl = 'https://example.com/ggml-large.bin'
+   const modelPath = `${RNFS.DocumentDirectoryPath}/ggml-large.bin`
+   
+   await RNFS.downloadFile({
+     fromUrl: modelUrl,
+     toFile: modelPath,
+   }).promise
+
+   const context = await initWhisper({ filePath: modelPath })
+   ```
+
+2. **Use quantized models** - They're smaller and often faster on mobile.
+
+## Memory Issues
+
+### Memory leaks
+
+<Warning>
+Always release contexts when done to prevent memory leaks.
+</Warning>
+
+```typescript
+// Release individual contexts
+await whisperContext.release()
+await vadContext.release()
+
+// Or release all contexts at once
+import { releaseAllWhisper, releaseAllWhisperVad } from 'whisper.rn'
+
+await releaseAllWhisper()
+await releaseAllWhisperVad()
+```
+
+### RealtimeTranscriber memory usage
+
+Control memory usage with slice limits:
+
+```typescript
+const transcriber = new RealtimeTranscriber(
+  { whisperContext, vadContext, audioStream },
+  {
+    audioSliceSec: 30,        // Slice duration
+    maxSlicesInMemory: 3,     // Keep only last 3 slices
+  }
+)
+```
+
+Monitor memory usage:
+
+```typescript
+transcriber.callbacks.onStats = (stats) => {
+  console.log('Memory usage:', stats.memoryUsage)
+  console.log('Slices in memory:', stats.memoryUsage.slicesInMemory)
+}
+```
+
+## ProGuard Issues (Android)
+
+<Warning>
+Android ProGuard may strip necessary native code if not configured properly.
+</Warning>
+
+Add this rule to `android/app/proguard-rules.pro`:
+
+```proguard
+-keep class com.rnwhisper.** { *; }
+```
+
+## Getting Help
+
+If your issue isn't covered here:
+
+1. Check [GitHub Issues](https://github.com/mybigday/whisper.rn/issues) for similar problems
+2. Review [whisper.cpp documentation](https://github.com/ggerganov/whisper.cpp) for core functionality
+3. Open a new issue with:
+   - Platform (iOS/Android) and version
+   - whisper.rn version
+   - Model size and type
+   - Minimal reproduction code
+   - Error messages and logs

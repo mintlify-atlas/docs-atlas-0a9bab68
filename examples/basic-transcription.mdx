@@ -1,0 +1,307 @@
+---
+title: 'Basic Transcription'
+description: 'Simple file transcription with whisper.rn'
+icon: 'file-audio'
+---
+
+This guide demonstrates basic audio file transcription using whisper.rn. You'll learn how to initialize a context, transcribe audio files, and handle progress callbacks.
+
+## Quick Start
+
+<Steps>
+  <Step title="Initialize Whisper Context">
+    First, initialize a Whisper context with a model file. You can use a bundled asset or download a model:
+
+    <CodeGroup>
+    ```typescript Using Bundled Asset
+    import { initWhisper } from 'whisper.rn';
+
+    const context = await initWhisper({
+      filePath: require('../assets/ggml-base.bin'),
+    });
+
+    console.log('Loaded model, ID:', context.id);
+    ```
+
+    ```typescript Download Model
+    import { initWhisper } from 'whisper.rn';
+    import RNFS from 'react-native-fs';
+
+    // Download model from Hugging Face
+    const modelUrl = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin';
+    const modelPath = `${RNFS.DocumentDirectoryPath}/ggml-base.bin`;
+
+    await RNFS.downloadFile({
+      fromUrl: modelUrl,
+      toFile: modelPath,
+      progress: (res) => {
+        const progress = (res.bytesWritten / res.contentLength) * 100;
+        console.log(`Download progress: ${progress.toFixed(1)}%`);
+      },
+    }).promise;
+
+    const context = await initWhisper({ filePath: modelPath });
+    ```
+    </CodeGroup>
+
+    <Tip>
+      For production apps, download models at runtime to keep your app bundle size small. The base model is ~140MB.
+    </Tip>
+  </Step>
+
+  <Step title="Transcribe Audio File">
+    Transcribe an audio file using the `transcribe()` method:
+
+    ```typescript
+    const sampleFile = require('../assets/jfk.wav');
+
+    const { stop, promise } = context.transcribe(sampleFile, {
+      language: 'en',
+      maxLen: 1,
+      tokenTimestamps: true,
+      onProgress: (progress) => {
+        console.log(`Transcribing: ${progress}%`);
+      },
+    });
+
+    const { result, segments } = await promise;
+
+    console.log('Result:', result);
+    console.log('Segments:', segments);
+    ```
+
+    The `transcribe()` method returns:
+    - `stop`: Function to cancel transcription
+    - `promise`: Promise that resolves with transcription results
+  </Step>
+
+  <Step title="Process Results">
+    The transcription result includes the full text and segmented output with timestamps:
+
+    ```typescript
+    // Helper function to format timestamps
+    function toTimestamp(t: number) {
+      let msec = t * 10;
+      const hr = Math.floor(msec / (1000 * 60 * 60));
+      msec -= hr * (1000 * 60 * 60);
+      const min = Math.floor(msec / (1000 * 60));
+      msec -= min * (1000 * 60);
+      const sec = Math.floor(msec / 1000);
+      msec -= sec * 1000;
+
+      return `${String(hr).padStart(2, '0')}:${String(min).padStart(2, '0')}:${String(sec).padStart(2, '0')}.${String(msec).padStart(3, '0')}`;
+    }
+
+    // Display formatted segments
+    const formattedSegments = segments.map((segment) => 
+      `[${toTimestamp(segment.t0)} --> ${toTimestamp(segment.t1)}] ${segment.text}`
+    ).join('\n');
+
+    console.log('Formatted transcription:\n', formattedSegments);
+    ```
+  </Step>
+
+  <Step title="Clean Up">
+    Always release the context when you're done to free up memory:
+
+    ```typescript
+    await context.release();
+    console.log('Context released');
+    ```
+
+    <Tip>
+      Use React's `useEffect` cleanup to automatically release contexts when components unmount.
+    </Tip>
+  </Step>
+</Steps>
+
+## Complete Example
+
+Here's a complete React Native component demonstrating basic transcription:
+
+```typescript Complete Example
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { View, Text, Button, ScrollView } from 'react-native';
+import { initWhisper } from 'whisper.rn';
+import type { WhisperContext } from 'whisper.rn';
+
+const sampleFile = require('../assets/jfk.wav');
+
+export default function BasicTranscription() {
+  const contextRef = useRef<WhisperContext | null>(null);
+  const [logs, setLogs] = useState<string[]>([]);
+  const [result, setResult] = useState<string | null>(null);
+  const [stopTranscribe, setStopTranscribe] = useState<{ stop: () => void } | null>(null);
+
+  const log = useCallback((...messages: any[]) => {
+    setLogs((prev) => [...prev, messages.join(' ')]);
+  }, []);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      contextRef.current?.release();
+    };
+  }, []);
+
+  const initialize = async () => {
+    if (contextRef.current) {
+      await contextRef.current.release();
+      log('Released previous context');
+    }
+
+    log('Initializing context...');
+    const startTime = Date.now();
+    const ctx = await initWhisper({
+      filePath: require('../assets/ggml-base.bin'),
+    });
+    const endTime = Date.now();
+    
+    log(`Loaded model in ${endTime - startTime}ms`);
+    contextRef.current = ctx;
+  };
+
+  const transcribe = async () => {
+    if (!contextRef.current) {
+      log('Context not initialized');
+      return;
+    }
+
+    log('Starting transcription...');
+    const startTime = Date.now();
+    
+    const { stop, promise } = contextRef.current.transcribe(sampleFile, {
+      language: 'en',
+      maxLen: 1,
+      tokenTimestamps: true,
+      onProgress: (progress) => {
+        log(`Progress: ${progress}%`);
+      },
+    });
+
+    setStopTranscribe({ stop });
+    const { result, segments } = await promise;
+    const endTime = Date.now();
+    
+    setStopTranscribe(null);
+    setResult(
+      `Result: ${result}\n` +
+      `Time: ${endTime - startTime}ms\n\n` +
+      `Segments:\n${segments.map((s) => 
+        `[${s.t0} --> ${s.t1}] ${s.text}`
+      ).join('\n')}`
+    );
+    log('Transcription complete');
+  };
+
+  return (
+    <ScrollView style={{ padding: 20 }}>
+      <Button title="Initialize" onPress={initialize} />
+      <Button 
+        title="Transcribe" 
+        onPress={transcribe}
+        disabled={!contextRef.current || !!stopTranscribe}
+      />
+      {stopTranscribe && (
+        <Button title="Stop" onPress={() => stopTranscribe.stop()} />
+      )}
+      
+      <View style={{ marginTop: 20 }}>
+        <Text>Logs:</Text>
+        {logs.map((log, i) => (
+          <Text key={i}>{log}</Text>
+        ))}
+      </View>
+
+      {result && (
+        <View style={{ marginTop: 20 }}>
+          <Text>Result:</Text>
+          <Text>{result}</Text>
+        </View>
+      )}
+    </ScrollView>
+  );
+}
+```
+
+## Transcription Options
+
+The `transcribe()` method accepts various options to customize behavior:
+
+<CodeGroup>
+```typescript Language Detection
+const { promise } = context.transcribe(audioFile, {
+  language: 'auto', // Auto-detect language
+  // Or specify: 'en', 'es', 'fr', 'de', 'ja', etc.
+});
+```
+
+```typescript With Prompts
+const { promise } = context.transcribe(audioFile, {
+  language: 'en',
+  prompt: 'HELLO WORLD', // Initial prompt to guide transcription
+});
+```
+
+```typescript Segment Callbacks
+const { promise } = context.transcribe(audioFile, {
+  language: 'en',
+  onNewSegments: (segments) => {
+    // Receive segments as they're generated
+    console.log('New segments:', segments);
+  },
+});
+```
+</CodeGroup>
+
+## Error Handling
+
+Always wrap transcription calls in try-catch blocks:
+
+```typescript
+try {
+  const context = await initWhisper({
+    filePath: require('../assets/ggml-base.bin'),
+  });
+
+  const { promise } = context.transcribe(audioFile, {
+    language: 'en',
+  });
+
+  const { result } = await promise;
+  console.log('Success:', result);
+} catch (error) {
+  console.error('Transcription failed:', error);
+}
+```
+
+## Performance Tips
+
+<Tip>
+  **Model Selection**: Start with `tiny` or `base` models for testing. Use `small` or `medium` for production.
+</Tip>
+
+<Tip>
+  **GPU Acceleration**: GPU/Metal is enabled by default on iOS. This significantly improves performance.
+</Tip>
+
+<Tip>
+  **Thread Count**: The default thread count (2-4) works well for most devices. Adjust using the `maxThreads` option if needed.
+</Tip>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="VAD Detection" icon="waveform-lines" href="/examples/vad-detection">
+    Learn how to detect speech segments in audio files
+  </Card>
+  <Card title="Realtime Streaming" icon="microphone" href="/examples/realtime-streaming">
+    Implement live transcription from microphone input
+  </Card>
+  <Card title="File Handling" icon="file" href="/examples/file-handling">
+    Work with different audio formats and data sources
+  </Card>
+  <Card title="API Reference" icon="code" href="/api-reference/whisper-context">
+    Full API documentation for WhisperContext
+  </Card>
+</CardGroup>

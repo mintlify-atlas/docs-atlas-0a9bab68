@@ -1,0 +1,166 @@
+---
+title: Introduction
+description: High-performance on-device speech recognition for React Native apps
+---
+
+<img
+  className="block dark:hidden"
+  src="/images/hero-light.svg"
+  alt="whisper.rn Hero Light"
+/>
+<img
+  className="hidden dark:block"
+  src="/images/hero-dark.svg"
+  alt="whisper.rn Hero Dark"
+/>
+
+## What is whisper.rn?
+
+whisper.rn is a React Native binding for [whisper.cpp](https://github.com/ggerganov/whisper.cpp), bringing OpenAI's powerful Whisper automatic speech recognition (ASR) model to iOS and Android devices with high-performance native inference.
+
+<CardGroup cols={2}>
+  <Card
+    title="On-Device Processing"
+    icon="mobile"
+  >
+    All transcription happens locally on the device - no cloud APIs, no internet required, complete privacy
+  </Card>
+  <Card
+    title="Production Ready"
+    icon="rocket"
+  >
+    Battle-tested in production apps with optimized performance for mobile devices
+  </Card>
+  <Card
+    title="Hardware Acceleration"
+    icon="microchip"
+  >
+    Supports Metal GPU on iOS and Core ML for encoder acceleration
+  </Card>
+  <Card
+    title="Realtime Transcription"
+    icon="waveform"
+  >
+    Built-in support for live microphone transcription with Voice Activity Detection
+  </Card>
+</CardGroup>
+
+## Key Features
+
+<AccordionGroup>
+  <Accordion title="Multiple Transcription Modes">
+    - **File Transcription**: Process audio files (WAV, base64 encoded audio)
+    - **Realtime Transcription**: Live microphone input with VAD auto-slicing
+    - **Data Transcription**: Direct PCM data processing via JSI (zero-copy ArrayBuffer)
+  </Accordion>
+
+  <Accordion title="Voice Activity Detection (VAD)">
+    Detect speech segments using the Silero VAD model with configurable presets:
+    - `default`, `sensitive`, `very-sensitive`
+    - `conservative`, `very-conservative`
+    - `continuous`, `meeting`, `noisy`
+  </Accordion>
+
+  <Accordion title="Platform Optimizations">
+    **iOS:**
+    - Core ML encoder acceleration (iOS 15.0+)
+    - Metal GPU acceleration
+    - Pre-built xcframework for faster builds
+    - Flash Attention support
+
+    **Android:**
+    - Optimized NDK builds
+    - 16KB page size support (Android 15+)
+    - ARM NEON optimizations
+  </Accordion>
+
+  <Accordion title="Model Support">
+    All Whisper model sizes supported:
+    - `tiny`, `tiny.en` (39-75 MB)
+    - `base`, `base.en` (142-148 MB)
+    - `small`, `small.en` (466-488 MB)
+    - `medium`, `medium.en` (1.5 GB)
+    - `large-v1`, `large-v2`, `large-v3` (2.9 GB)
+
+    Plus quantized models for reduced size and faster inference.
+  </Accordion>
+</AccordionGroup>
+
+## Performance
+
+<Note>
+  On an iPhone 13 Pro Max, the `tiny.en` model with Core ML processes a 30-second audio clip in approximately 800ms in release mode.
+</Note>
+
+Actual performance varies by:
+- Device CPU/GPU capabilities
+- Model size (tiny/base/small/medium/large)
+- Audio duration and complexity
+- Whether Core ML/GPU acceleration is enabled
+
+## Quick Navigation
+
+<CardGroup cols={2}>
+  <Card
+    title="Installation"
+    icon="download"
+    href="/installation"
+  >
+    Get whisper.rn installed in your React Native app with platform-specific setup
+  </Card>
+  <Card
+    title="Quick Start"
+    icon="bolt"
+    href="/quickstart"
+  >
+    Transcribe your first audio file in under 5 minutes
+  </Card>
+  <Card
+    title="API Reference"
+    icon="code"
+    href="/api-reference/context"
+  >
+    Complete API documentation for all features
+  </Card>
+  <Card
+    title="Examples"
+    icon="sparkles"
+    href="/examples/file-transcription"
+  >
+    Real-world examples and use cases
+  </Card>
+</CardGroup>
+
+## Use Cases
+
+- **Voice Notes**: Transcribe voice memos and notes
+- **Accessibility**: Real-time captions for video content
+- **Meeting Transcription**: Record and transcribe meetings
+- **Language Learning**: Transcribe practice conversations
+- **Voice Commands**: Build custom voice-controlled interfaces
+- **Subtitles**: Generate subtitles for video content
+
+## Community
+
+whisper.rn is open source and built by [BRICKS](https://bricks.tools).
+
+<CardGroup cols={2}>
+  <Card
+    title="GitHub Repository"
+    icon="github"
+    href="https://github.com/mybigday/whisper.rn"
+  >
+    Star, fork, and contribute on GitHub
+  </Card>
+  <Card
+    title="Report Issues"
+    icon="bug"
+    href="https://github.com/mybigday/whisper.rn/issues"
+  >
+    Found a bug? Let us know
+  </Card>
+</CardGroup>
+
+<Tip>
+  Ready to get started? Head over to [Installation](/installation) to set up whisper.rn in your project.
+</Tip>

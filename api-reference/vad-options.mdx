@@ -1,0 +1,278 @@
+---
+title: VadOptions
+description: Configuration options for Voice Activity Detection
+---
+
+The `VadOptions` interface defines parameters for configuring voice activity detection behavior when using the Silero VAD model.
+
+## Interface
+
+```typescript
+interface VadOptions {
+  threshold?: number
+  minSpeechDurationMs?: number
+  minSilenceDurationMs?: number
+  maxSpeechDurationS?: number
+  speechPadMs?: number
+  samplesOverlap?: number
+}
+```
+
+## Properties
+
+<ParamField path="threshold" type="number" default="0.5">
+  Probability threshold to consider audio as speech.
+  
+  - Range: `0.0` to `1.0`
+  - Higher values = more conservative (fewer false positives)
+  - Lower values = more sensitive (may detect more speech)
+  - Recommended: `0.4` to `0.7`
+  
+  ```typescript
+  // Very sensitive - may pick up background noise
+  { threshold: 0.3 }
+  
+  // Balanced - good for most use cases
+  { threshold: 0.5 }
+  
+  // Conservative - only clear speech
+  { threshold: 0.7 }
+  ```
+</ParamField>
+
+<ParamField path="minSpeechDurationMs" type="number" default="250">
+  Minimum duration (in milliseconds) for a valid speech segment.
+  
+  Segments shorter than this will be filtered out as noise.
+  
+  ```typescript
+  // Filter out very short utterances
+  { minSpeechDurationMs: 500 }
+  
+  // Keep even brief speech
+  { minSpeechDurationMs: 100 }
+  ```
+</ParamField>
+
+<ParamField path="minSilenceDurationMs" type="number" default="100">
+  Minimum silence duration (in milliseconds) to consider speech as ended.
+  
+  Short pauses shorter than this will not split speech segments.
+  
+  ```typescript
+  // Split on brief pauses
+  { minSilenceDurationMs: 50 }
+  
+  // Tolerate longer pauses within speech
+  { minSilenceDurationMs: 300 }
+  ```
+</ParamField>
+
+<ParamField path="maxSpeechDurationS" type="number" default="30">
+  Maximum duration (in seconds) of a speech segment before forcing a new segment.
+  
+  Long continuous speech will be split at this duration to avoid oversized segments.
+  
+  ```typescript
+  // Split long speech into 15-second chunks
+  { maxSpeechDurationS: 15 }
+  
+  // Allow longer segments
+  { maxSpeechDurationS: 60 }
+  ```
+</ParamField>
+
+<ParamField path="speechPadMs" type="number" default="30">
+  Padding (in milliseconds) added before and after detected speech segments.
+  
+  Helps capture the beginning and end of speech that might be near the detection threshold.
+  
+  ```typescript
+  // Minimal padding
+  { speechPadMs: 10 }
+  
+  // Extra padding for safety
+  { speechPadMs: 100 }
+  ```
+</ParamField>
+
+<ParamField path="samplesOverlap" type="number" default="0.1">
+  Overlap (in seconds) when copying audio samples from speech segments.
+  
+  Used internally for processing audio chunks with continuity.
+  
+  ```typescript
+  // Minimal overlap
+  { samplesOverlap: 0.05 }
+  
+  // More overlap for better continuity
+  { samplesOverlap: 0.2 }
+  ```
+</ParamField>
+
+## Usage Examples
+
+### Default Settings
+
+```typescript
+import { initWhisperVad } from 'whisper.rn'
+
+const vadContext = await initWhisperVad({
+  filePath: '/path/to/silero_vad.bin',
+})
+
+// Use default VAD settings
+const segments = await vadContext.detectSpeech('/path/to/audio.wav')
+```
+
+### Custom Configuration
+
+```typescript
+// Conservative settings - only clear speech
+const segments = await vadContext.detectSpeech('/path/to/audio.wav', {
+  threshold: 0.7,
+  minSpeechDurationMs: 500,
+  minSilenceDurationMs: 200,
+  maxSpeechDurationS: 20,
+  speechPadMs: 50,
+})
+```
+
+### Sensitive Detection
+
+```typescript
+// Sensitive settings - catch all speech
+const segments = await vadContext.detectSpeech('/path/to/audio.wav', {
+  threshold: 0.3,
+  minSpeechDurationMs: 100,
+  minSilenceDurationMs: 50,
+  speechPadMs: 100,
+})
+```
+
+### Preset Configurations
+
+```typescript
+// Balanced preset (default)
+const balanced: VadOptions = {
+  threshold: 0.5,
+  minSpeechDurationMs: 250,
+  minSilenceDurationMs: 100,
+  maxSpeechDurationS: 30,
+  speechPadMs: 30,
+}
+
+// High accuracy preset
+const highAccuracy: VadOptions = {
+  threshold: 0.6,
+  minSpeechDurationMs: 500,
+  minSilenceDurationMs: 200,
+  maxSpeechDurationS: 25,
+  speechPadMs: 50,
+}
+
+// High sensitivity preset
+const highSensitivity: VadOptions = {
+  threshold: 0.35,
+  minSpeechDurationMs: 100,
+  minSilenceDurationMs: 50,
+  maxSpeechDurationS: 30,
+  speechPadMs: 100,
+}
+
+const segments = await vadContext.detectSpeech('/path/to/audio.wav', balanced)
+```
+
+## VadSegment Return Type
+
+The `detectSpeech` and `detectSpeechData` methods return an array of `VadSegment` objects:
+
+```typescript
+interface VadSegment {
+  /** Start time in milliseconds */
+  t0: number
+  /** End time in milliseconds */
+  t1: number
+}
+```
+
+### Example
+
+```typescript
+const segments = await vadContext.detectSpeech('/path/to/audio.wav', {
+  threshold: 0.5,
+  minSpeechDurationMs: 250,
+})
+
+segments.forEach((segment) => {
+  console.log(`Speech from ${segment.t0}ms to ${segment.t1}ms`)
+  console.log(`Duration: ${segment.t1 - segment.t0}ms`)
+})
+
+// Output:
+// Speech from 1200ms to 3500ms
+// Duration: 2300ms
+// Speech from 4800ms to 7100ms
+// Duration: 2300ms
+```
+
+## Tuning Guidelines
+
+### For Noisy Environments
+
+```typescript
+const noisyEnv: VadOptions = {
+  threshold: 0.65,           // Higher threshold
+  minSpeechDurationMs: 400,  // Longer minimum duration
+  minSilenceDurationMs: 150, // More silence required
+  speechPadMs: 50,           // Some padding
+}
+```
+
+### For Quiet, Clear Speech
+
+```typescript
+const clearSpeech: VadOptions = {
+  threshold: 0.4,            // Lower threshold
+  minSpeechDurationMs: 150,  // Shorter minimum
+  minSilenceDurationMs: 80,  // Brief pauses acceptable
+  speechPadMs: 30,           // Minimal padding
+}
+```
+
+### For Continuous Speech (Lectures, Podcasts)
+
+```typescript
+const continuous: VadOptions = {
+  threshold: 0.5,
+  minSpeechDurationMs: 300,
+  minSilenceDurationMs: 200,  // Tolerate pauses
+  maxSpeechDurationS: 60,     // Allow longer segments
+  speechPadMs: 40,
+}
+```
+
+### For Command Words (Short Utterances)
+
+```typescript
+const commands: VadOptions = {
+  threshold: 0.5,
+  minSpeechDurationMs: 100,   // Very short OK
+  minSilenceDurationMs: 100,  // Quick detection
+  maxSpeechDurationS: 5,      // Short segments
+  speechPadMs: 50,            // Extra padding
+}
+```
+
+## Performance Considerations
+
+- **Lower threshold**: More segments detected, more processing time
+- **Higher minSpeechDurationMs**: Fewer segments, faster processing
+- **speechPadMs**: Adds to segment duration, increases data to process
+- **maxSpeechDurationS**: Limits segment size, helps memory management
+
+## Related
+
+- [WhisperVadContext.detectSpeech](/api-reference/whisper-vad-context#detectspeech) - Detect speech in files
+- [WhisperVadContext.detectSpeechData](/api-reference/whisper-vad-context#detectspeechdata) - Detect speech in raw data
+- [initWhisperVad](/api-reference/init-whisper-vad) - Initialize VAD context

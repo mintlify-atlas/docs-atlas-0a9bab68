@@ -1,80 +1,232 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quickstart
+description: Get started with whisper.rn in under 5 minutes
 ---
 
-## Get started in three steps
+Get up and running with whisper.rn by transcribing your first audio file in just a few steps.
 
-Get your documentation site running locally and make your first customization.
+## Prerequisites
 
-### Step 1: Set up your local environment
+<Check>
+  Completed the [Installation](/installation) guide
+</Check>
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
+## Your First Transcription
+
+<Steps>
+  <Step title="Import whisper.rn">
+    Import the `initWhisper` function in your React Native component:
+
+    ```typescript
+    import { initWhisper } from 'whisper.rn'
+    ```
+  </Step>
+
+  <Step title="Initialize the Whisper Context">
+    Initialize a Whisper context with a model file:
+
+    ```typescript
+    const whisperContext = await initWhisper({
+      filePath: '/path/to/ggml-tiny.en.bin',
+    })
+    ```
+
+    <Tip>
+      Download the `ggml-tiny.en.bin` model from [Hugging Face](https://huggingface.co/ggerganov/whisper.cpp/tree/main). The tiny model is ~75MB and perfect for getting started.
+    </Tip>
+  </Step>
+
+  <Step title="Transcribe an Audio File">
+    Call the `transcribe()` method with your audio file:
+
+    ```typescript
+    const { promise } = whisperContext.transcribe(
+      '/path/to/audio.wav',
+      { language: 'en' }
+    )
+
+    const { result } = await promise
+    console.log('Transcription:', result)
+    ```
+
+    <Note>
+      Audio files must be in WAV format, 16kHz sample rate, mono channel. See [Audio Formats](/core-concepts/audio-formats) for details.
+    </Note>
+  </Step>
+
+  <Step title="Clean Up">
+    Always release the context when you're done:
+
+    ```typescript
+    await whisperContext.release()
+    ```
+  </Step>
+</Steps>
+
+## Complete Example
+
+Here's a full React Native component that transcribes an audio file:
+
+```typescript
+import React, { useState, useEffect } from 'react'
+import { View, Text, Button, ActivityIndicator } from 'react-native'
+import { initWhisper } from 'whisper.rn'
+
+export default function TranscribeScreen() {
+  const [transcription, setTranscription] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  const transcribeAudio = async () => {
+    setLoading(true)
     
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+    try {
+      // Initialize context
+      const whisperContext = await initWhisper({
+        filePath: require('./assets/ggml-tiny.en.bin'),
+      })
 
-### Step 2: Deploy your changes
+      // Transcribe audio file
+      const { promise } = whisperContext.transcribe(
+        require('./assets/sample.wav'),
+        { 
+          language: 'en',
+          maxThreads: 4,
+        }
+      )
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
+      const { result } = await promise
+      setTranscription(result)
+
+      // Clean up
+      await whisperContext.release()
+    } catch (error) {
+      console.error('Transcription failed:', error)
+      setTranscription('Error: ' + error.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <View style={{ padding: 20 }}>
+      <Button
+        title="Transcribe Audio"
+        onPress={transcribeAudio}
+        disabled={loading}
+      />
+      
+      {loading && <ActivityIndicator style={{ marginTop: 20 }} />}
+      
+      {transcription && (
+        <Text style={{ marginTop: 20 }}>{transcription}</Text>
+      )}
+    </View>
+  )
+}
+```
+
+<Accordion title="Using bundled assets">
+  If you want to bundle the model and audio files with your app:
+
+  1. Add `.bin` to Metro config (see [Installation](/installation#using-bundled-assets-optional))
+  2. Use `require()` instead of file paths:
+
+  ```typescript
+  const whisperContext = await initWhisper({
+    filePath: require('./assets/ggml-tiny.en.bin'),
+  })
+
+  const { promise } = whisperContext.transcribe(
+    require('./assets/sample.wav'),
+    { language: 'en' }
+  )
+  ```
+
+  <Warning>
+    Bundling models will increase your app size significantly. The tiny model is ~75MB.
+  </Warning>
 </Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+## Common Options
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+<ParamField path="language" type="string" default="auto">
+  Language code (e.g., 'en', 'es', 'fr') or 'auto' for automatic detection
+</ParamField>
 
-### Step 3: Go live
+<ParamField path="translate" type="boolean" default="false">
+  Translate speech to English
+</ParamField>
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+<ParamField path="maxThreads" type="number" default="2-4">
+  Number of CPU threads to use (2 for 4-core devices, 4 for more)
+</ParamField>
 
-## Next steps
+<ParamField path="beamSize" type="number" default="5">
+  Beam search size for better accuracy (higher = more accurate but slower)
+</ParamField>
 
-Now that you have your docs running, explore these key features:
+<ParamField path="onProgress" type="function">
+  Callback function for transcription progress (0-100)
+</ParamField>
+
+See [TranscribeOptions](/api-reference/types/transcribe-options) for all available options.
+
+## Next Steps
 
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Core Concepts" icon="book" href="/core-concepts/contexts">
+    Learn about contexts and audio formats
+  </Card>
+  <Card title="Features" icon="sparkles" href="/features/transcription">
+    Explore transcription, VAD, and realtime features
+  </Card>
+  <Card title="Examples" icon="code" href="/examples/basic-transcription">
+    See more code examples and patterns
+  </Card>
+  <Card title="API Reference" icon="brackets-curly" href="/api-reference/init-whisper">
+    View complete API documentation
+  </Card>
 </CardGroup>
 
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Model file not found">
+    **Error:** `Error: Model file not found`
+    
+    **Solution:** Verify the model file path is correct. If using `require()`, ensure the file exists in your project and Metro config includes `.bin` extensions.
+  </Accordion>
+
+  <Accordion title="Audio format error">
+    **Error:** `Error: Invalid audio format`
+    
+    **Solution:** Ensure your audio file is:
+    - WAV format
+    - 16kHz sample rate
+    - Mono channel (1 channel)
+    - 16-bit PCM encoding
+
+    Use ffmpeg to convert: `ffmpeg -i input.mp3 -ar 16000 -ac 1 -c:a pcm_s16le output.wav`
+  </Accordion>
+
+  <Accordion title="Slow transcription">
+    **Problem:** Transcription takes too long
+    
+    **Solution (iOS):** Enable Core ML acceleration (see [Core ML Setup](/features/coreml-acceleration))
+    
+    **Solution (General):** 
+    - Use a smaller or quantized model (e.g., `tiny` or `base-q8_0`)
+    - Increase `maxThreads` (try 4)
+    - Test in Release mode, not Debug mode
+  </Accordion>
+
+  <Accordion title="Memory issues on iOS">
+    **Error:** App crashes with large models
+    
+    **Solution:** Enable Extended Virtual Addressing capability in Xcode:
+    1. Open your iOS project in Xcode
+    2. Select your app target
+    3. Go to Signing & Capabilities
+    4. Add "Extended Virtual Addressing" capability
+  </Accordion>
+</AccordionGroup>

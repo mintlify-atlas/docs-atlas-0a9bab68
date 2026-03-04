@@ -1,0 +1,354 @@
+---
+title: iOS Setup
+description: Configure whisper.rn for iOS including permissions, Core ML, and Metal acceleration
+---
+
+## Installation
+
+After installing the package, you need to install the iOS dependencies:
+
+<Steps>
+  <Step title="Install pods">
+    Run pod install in your iOS directory:
+    
+    ```bash
+    npx pod-install
+    ```
+  </Step>
+  
+  <Step title="Choose build method (optional)">
+    By default, whisper.rn uses a pre-built `rnwhisper.xcframework` for faster builds. To build from source instead, add this to your Podfile:
+    
+    ```ruby
+    ENV['RNWHISPER_BUILD_FROM_SOURCE'] = '1'
+    ```
+  </Step>
+</Steps>
+
+## Microphone Permissions
+
+If you want to use realtime transcription features, you need to add microphone permissions.
+
+### Add to Info.plist
+
+Add the microphone usage description to `ios/[YOUR_APP_NAME]/Info.plist`:
+
+```xml
+<key>NSMicrophoneUsageDescription</key>
+<string>This app requires microphone access in order to transcribe speech</string>
+```
+
+<Note>
+  For tvOS, please note that the microphone is not supported.
+</Note>
+
+### Request Permission at Runtime
+
+Use React Native's PermissionsIOS API to request permission:
+
+```typescript
+import { PermissionsIOS, Platform } from 'react-native'
+
+if (Platform.OS === 'ios') {
+  const status = await PermissionsIOS.request(
+    PermissionsIOS.PERMISSIONS.MICROPHONE
+  )
+  
+  if (status !== 'granted') {
+    console.log('Microphone permission denied')
+  }
+}
+```
+
+## Audio Session Management
+
+whisper.rn provides utilities to manage iOS Audio Session settings for optimal recording quality and compatibility with other audio playback.
+
+### Available Categories
+
+- `Ambient` - Mix with other audio, no recording
+- `SoloAmbient` - Interrupt other audio, no recording  
+- `Playback` - For playback only
+- `Record` - For recording only
+- `PlayAndRecord` - **Recommended for realtime transcription**
+- `MultiRoute` - Multiple audio routes
+
+### Available Options
+
+- `MixWithOthers` - Mix with other apps' audio
+- `DuckOthers` - Lower other apps' audio volume
+- `InterruptSpokenAudioAndMixWithOthers`
+- `AllowBluetoothA2DP` - Enable Bluetooth A2DP
+- `AllowAirPlay` - Enable AirPlay
+- `AllowBluetooth` - Enable Bluetooth (iOS only, not tvOS)
+- `DefaultToSpeaker` - Route to speaker by default (iOS only, not tvOS)
+
+### Available Modes
+
+- `Default` - Default mode
+- `VoiceChat` - Optimized for voice chat
+- `VideoChat` - Optimized for video chat
+- `GameChat` - Optimized for game chat
+- `VideoRecording` - Optimized for video recording
+- `Measurement` - For audio measurement
+- `MoviePlayback` - For movie playback
+- `SpokenAudio` - For podcasts/audiobooks
+
+### Manual Audio Session Management
+
+You can manually configure the audio session before starting transcription:
+
+```typescript
+import { AudioSessionIos } from 'whisper.rn'
+
+// Configure category with options
+await AudioSessionIos.setCategory(
+  AudioSessionIos.Category.PlayAndRecord,
+  [AudioSessionIos.CategoryOption.MixWithOthers]
+)
+
+// Set mode
+await AudioSessionIos.setMode(AudioSessionIos.Mode.Default)
+
+// Activate session
+await AudioSessionIos.setActive(true)
+
+// Now start recording/transcription
+```
+
+### Automatic Session Management (Deprecated API)
+
+If using the deprecated `transcribeRealtime` API, you can configure audio session automatically:
+
+```typescript
+const { stop, subscribe } = await whisperContext.transcribeRealtime({
+  audioSessionOnStartIos: {
+    category: AudioSessionIos.Category.PlayAndRecord,
+    options: [AudioSessionIos.CategoryOption.MixWithOthers],
+    mode: AudioSessionIos.Mode.Default,
+  },
+  audioSessionOnStopIos: 'restore', // Or provide custom settings
+})
+```
+
+## Core ML Support
+
+Core ML significantly accelerates the encoder on iOS 15.0+ and tvOS 15.0+.
+
+### Model Requirements
+
+Core ML models are loaded based on your GGML model path:
+
+- GGML model: `ggml-tiny.en.bin`
+- Core ML model: `ggml-tiny.en-encoder.mlmodelc/`
+
+<Warning>
+  The GGML model is still required alongside Core ML models for decoder and fallback.
+</Warning>
+
+### Core ML Model Structure
+
+The `.mlmodelc` directory contains these files:
+
+```json5
+[
+  'model.mil',              // Required
+  'coremldata.bin',         // Required
+  'weights/weight.bin',     // Required
+  'metadata.json',          // Optional
+  'analytics/coremldata.bin' // Optional
+]
+```
+
+### Downloading Core ML Models
+
+Core ML models are available from Hugging Face:
+
+https://huggingface.co/ggerganov/whisper.cpp/tree/main
+
+<Note>
+  Models are distributed as zip archives. You'll need to unzip them at runtime using a library like [react-native-zip-archive](https://github.com/mockingbot/react-native-zip-archive).
+</Note>
+
+### Bundling Core ML Models
+
+You can bundle Core ML models in your app (increases app size significantly):
+
+<CodeGroup>
+```typescript iOS
+import { Platform } from 'react-native'
+
+const whisperContext = await initWhisper({
+  filePath: require('../assets/ggml-tiny.en.bin'),
+  coreMLModelAsset:
+    Platform.OS === 'ios'
+      ? {
+          filename: 'ggml-tiny.en-encoder.mlmodelc',
+          assets: [
+            require('../assets/ggml-tiny.en-encoder.mlmodelc/weights/weight.bin'),
+            require('../assets/ggml-tiny.en-encoder.mlmodelc/model.mil'),
+            require('../assets/ggml-tiny.en-encoder.mlmodelc/coremldata.bin'),
+          ],
+        }
+      : undefined,
+})
+```
+
+```javascript Metro Config
+// metro.config.js
+const defaultAssetExts = require('metro-config/src/defaults/defaults').assetExts
+
+module.exports = {
+  resolver: {
+    assetExts: [
+      ...defaultAssetExts,
+      'bin', // GGML model binary
+      'mil', // Core ML model asset
+    ],
+  },
+}
+```
+</CodeGroup>
+
+<Warning>
+  Bundling models significantly increases app size. Consider using platform-specific files (`context-opts.ios.js`) to avoid bundling iOS assets for Android.
+</Warning>
+
+### Disabling Core ML
+
+To disable Core ML even when model files exist:
+
+```typescript
+const whisperContext = await initWhisper({
+  filePath: 'path/to/model.bin',
+  useCoreMLIos: false,
+})
+```
+
+Or disable during build by setting environment variable in your Podfile:
+
+```ruby
+ENV['RNWHISPER_DISABLE_COREML'] = '1'
+```
+
+## Metal GPU Acceleration
+
+Metal acceleration is enabled by default on iOS and tvOS for significant performance improvements.
+
+### Enabling/Disabling Metal
+
+Control Metal acceleration at runtime:
+
+```typescript
+const whisperContext = await initWhisper({
+  filePath: 'path/to/model.bin',
+  useGpu: true, // Enabled by default
+})
+```
+
+Disable Metal during build in your Podfile:
+
+```ruby
+ENV['RNWHISPER_DISABLE_METAL'] = '1'
+```
+
+## Extended Virtual Addressing
+
+For medium or large models, enable the Extended Virtual Addressing capability in your Xcode project:
+
+<Steps>
+  <Step title="Open Xcode project">
+    Open `ios/[YOUR_APP_NAME].xcworkspace`
+  </Step>
+  
+  <Step title="Select your target">
+    Select your app target in the project navigator
+  </Step>
+  
+  <Step title="Add capability">
+    Go to **Signing & Capabilities** → Click **+ Capability** → Search for "Extended Virtual Addressing" → Add it
+  </Step>
+</Steps>
+
+This allows your app to use more memory for larger models.
+
+## Build Configuration
+
+### Pre-built Framework (Default)
+
+By default, whisper.rn uses `ios/rnwhisper.xcframework` which includes:
+
+- Pre-compiled whisper.cpp bindings
+- Metal shaders (`.metallib`)
+- Optimized builds for all iOS/tvOS architectures
+
+This provides:
+- ✅ Faster build times
+- ✅ Smaller build artifacts
+- ✅ Consistent performance
+
+### Building from Source
+
+To build from source, add to your Podfile before `pod install`:
+
+```ruby
+ENV['RNWHISPER_BUILD_FROM_SOURCE'] = '1'
+```
+
+This is useful when:
+- Debugging native code
+- Contributing to whisper.rn
+- Customizing whisper.cpp configuration
+
+<Note>
+  Building from source increases build time significantly but gives you full control over compilation flags.
+</Note>
+
+## Minimum Versions
+
+- **iOS**: 11.0+
+- **tvOS**: 11.0+
+- **Core ML**: iOS 15.0+ / tvOS 15.0+
+
+## Platform Limitations
+
+<Warning>
+  Microphone is not supported on tvOS. Realtime transcription features will not work on tvOS devices.
+</Warning>
+
+## Performance Tips
+
+1. **Use Core ML** - 2-3x faster encoder on supported devices
+2. **Enable Metal** - Significant GPU acceleration
+3. **Test in Release mode** - Debug builds are much slower
+4. **Use quantized models** - Smaller size, faster inference
+5. **Choose appropriate model size** - tiny/base for most mobile use cases
+
+## Troubleshooting
+
+### Build errors
+
+Clean derived data and rebuild:
+
+```bash
+rm -rf ~/Library/Developer/Xcode/DerivedData
+cd ios && pod install && cd ..
+```
+
+### Core ML not working
+
+Check that:
+- iOS version is 15.0+
+- `.mlmodelc` directory is properly located
+- All required files exist in `.mlmodelc/`
+- `useCoreMLIos` is not set to `false`
+
+### Audio session conflicts
+
+Manually manage audio session before starting other audio operations:
+
+```typescript
+await AudioSessionIos.setActive(false)
+// Other audio operations
+await AudioSessionIos.setActive(true)
+```

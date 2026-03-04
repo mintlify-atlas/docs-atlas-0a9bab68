@@ -1,0 +1,508 @@
+---
+title: "Custom Audio Adapters"
+description: "Build custom audio stream adapters for realtime transcription"
+---
+
+## Overview
+
+The `AudioStreamInterface` enables you to integrate any audio source with `RealtimeTranscriber`. Whether you're using a third-party audio library, custom hardware, or a specialized audio pipeline, implementing this interface allows seamless integration.
+
+## AudioStreamInterface
+
+All audio stream adapters must implement this interface to work with the realtime transcription system.
+
+### Interface Definition
+
+```typescript types.ts
+export interface AudioStreamInterface {
+  initialize(config: AudioStreamConfig): Promise<void>
+  start(): Promise<void>
+  stop(): Promise<void>
+  isRecording(): boolean
+  onData(callback: (data: AudioStreamData) => void): void
+  onError(callback: (error: string) => void): void
+  onStatusChange(callback: (isRecording: boolean) => void): void
+  onEnd?(callback: () => void): void
+  release(): Promise<void>
+}
+```
+
+### Configuration Types
+
+<ParamField path="AudioStreamConfig" type="object">
+  Configuration object passed to `initialize()`
+  
+  <Expandable title="properties">
+    <ParamField path="sampleRate" type="number" default="16000">
+      Audio sample rate in Hz. Whisper requires 16kHz.
+    </ParamField>
+    
+    <ParamField path="channels" type="number" default="1">
+      Number of audio channels. Whisper requires mono (1 channel).
+    </ParamField>
+    
+    <ParamField path="bitsPerSample" type="number" default="16">
+      Bits per audio sample. Standard is 16-bit PCM.
+    </ParamField>
+    
+    <ParamField path="bufferSize" type="number">
+      Size of audio buffer in bytes. Affects latency and memory usage.
+    </ParamField>
+    
+    <ParamField path="audioSource" type="number">
+      Platform-specific audio source identifier (Android MediaRecorder constants).
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="AudioStreamData" type="object">
+  Data structure delivered via the `onData` callback
+  
+  <Expandable title="properties">
+    <ParamField path="data" type="Uint8Array" required>
+      Raw PCM audio data as bytes (16-bit PCM).
+    </ParamField>
+    
+    <ParamField path="sampleRate" type="number" required>
+      Sample rate of this audio chunk.
+    </ParamField>
+    
+    <ParamField path="channels" type="number" required>
+      Number of channels in this audio chunk.
+    </ParamField>
+    
+    <ParamField path="timestamp" type="number" required>
+      Timestamp when this data was captured (milliseconds since epoch).
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+## Method Requirements
+
+### initialize(config)
+
+Called once to set up the audio stream with configuration parameters.
+
+<ParamField path="config" type="AudioStreamConfig" required>
+  Stream configuration including sample rate, channels, buffer size
+</ParamField>
+
+**Requirements:**
+- Configure the underlying audio system
+- Validate configuration parameters
+- Set up internal state
+- Should be idempotent (safe to call multiple times)
+
+### start()
+
+Begin capturing audio and emitting data through the `onData` callback.
+
+**Requirements:**
+- Start audio capture
+- Begin calling `onData` callback with audio chunks
+- Call `onStatusChange(true)` when recording starts
+- Throw error if not initialized
+
+### stop()
+
+Stop capturing audio.
+
+**Requirements:**
+- Stop audio capture
+- Stop emitting data callbacks
+- Call `onStatusChange(false)` when recording stops
+- Should be safe to call even if not recording
+
+### isRecording()
+
+Return current recording state.
+
+<ResponseField name="isRecording" type="boolean">
+  `true` if currently capturing audio, `false` otherwise
+</ResponseField>
+
+### onData(callback)
+
+Register callback for receiving audio data chunks.
+
+<ParamField path="callback" type="function" required>
+  Function called with each audio chunk: `(data: AudioStreamData) => void`
+</ParamField>
+
+**Requirements:**
+- Store callback for later invocation
+- Call whenever new audio data is available
+- Should handle case where callback is not set
+
+### onError(callback)
+
+Register callback for error handling.
+
+<ParamField path="callback" type="function" required>
+  Function called on errors: `(error: string) => void`
+</ParamField>
+
+**Requirements:**
+- Call when audio system errors occur
+- Provide descriptive error messages
+- Should not throw, only invoke callback
+
+### onStatusChange(callback)
+
+Register callback for recording status changes.
+
+<ParamField path="callback" type="function" required>
+  Function called on status change: `(isRecording: boolean) => void`
+</ParamField>
+
+**Requirements:**
+- Call when recording starts (`true`)
+- Call when recording stops (`false`)
+
+### onEnd(callback) [Optional]
+
+Register callback for when audio stream ends naturally (e.g., file playback completes).
+
+<ParamField path="callback" type="function">
+  Function called when stream ends: `() => void`
+</ParamField>
+
+### release()
+
+Clean up resources and prepare for disposal.
+
+**Requirements:**
+- Stop recording if active
+- Release native audio resources
+- Clear callbacks
+- Reset internal state
+- Should be idempotent
+
+## Built-in Adapter: AudioPcmStreamAdapter
+
+The library includes a production-ready adapter using `@fugood/react-native-audio-pcm-stream`.
+
+### Example Implementation
+
+```typescript AudioPcmStreamAdapter.ts
+import LiveAudioStream from '@fugood/react-native-audio-pcm-stream'
+import type { AudioStreamInterface, AudioStreamConfig, AudioStreamData } from '../types'
+import { base64ToUint8Array } from '../../utils/common'
+
+export class AudioPcmStreamAdapter implements AudioStreamInterface {
+  private isInitialized = false
+  private recording = false
+  private config: AudioStreamConfig | null = null
+  private dataCallback?: (data: AudioStreamData) => void
+  private errorCallback?: (error: string) => void
+  private statusCallback?: (isRecording: boolean) => void
+
+  async initialize(config: AudioStreamConfig): Promise<void> {
+    if (this.isInitialized) {
+      await this.release()
+    }
+
+    try {
+      this.config = config || null
+
+      LiveAudioStream.init({
+        sampleRate: config.sampleRate || 16000,
+        channels: config.channels || 1,
+        bitsPerSample: config.bitsPerSample || 16,
+        audioSource: config.audioSource || 6,
+        bufferSize: config.bufferSize || 16 * 1024,
+        wavFile: '',
+      })
+
+      LiveAudioStream.on('data', this.handleAudioData.bind(this))
+      this.isInitialized = true
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      this.errorCallback?.(errorMessage)
+      throw new Error(`Failed to initialize: ${errorMessage}`)
+    }
+  }
+
+  async start(): Promise<void> {
+    if (!this.isInitialized) {
+      throw new Error('Not initialized')
+    }
+    if (this.recording) return
+
+    LiveAudioStream.start()
+    this.recording = true
+    this.statusCallback?.(true)
+  }
+
+  async stop(): Promise<void> {
+    if (!this.recording) return
+
+    await LiveAudioStream.stop()
+    this.recording = false
+    this.statusCallback?.(false)
+  }
+
+  isRecording(): boolean {
+    return this.recording
+  }
+
+  onData(callback: (data: AudioStreamData) => void): void {
+    this.dataCallback = callback
+  }
+
+  onError(callback: (error: string) => void): void {
+    this.errorCallback = callback
+  }
+
+  onStatusChange(callback: (isRecording: boolean) => void): void {
+    this.statusCallback = callback
+  }
+
+  async release(): Promise<void> {
+    if (this.recording) {
+      await this.stop()
+    }
+    this.isInitialized = false
+    this.config = null
+    this.dataCallback = undefined
+    this.errorCallback = undefined
+    this.statusCallback = undefined
+  }
+
+  private handleAudioData(base64Data: string): void {
+    if (!this.dataCallback) return
+
+    try {
+      const audioData = base64ToUint8Array(base64Data)
+      const streamData: AudioStreamData = {
+        data: audioData,
+        sampleRate: this.config?.sampleRate || 16000,
+        channels: this.config?.channels || 1,
+        timestamp: Date.now(),
+      }
+      this.dataCallback(streamData)
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Processing error'
+      this.errorCallback?.(errorMessage)
+    }
+  }
+}
+```
+
+## Custom Adapter Example
+
+Here's a minimal custom adapter for testing or file-based input:
+
+```typescript CustomFileAdapter.ts
+import type { AudioStreamInterface, AudioStreamConfig, AudioStreamData } from 'whisper.rn'
+
+export class FileAudioAdapter implements AudioStreamInterface {
+  private config: AudioStreamConfig | null = null
+  private dataCallback?: (data: AudioStreamData) => void
+  private errorCallback?: (error: string) => void
+  private statusCallback?: (isRecording: boolean) => void
+  private intervalId?: NodeJS.Timeout
+  private isPlaying = false
+  private audioFileData: Uint8Array
+  private currentPosition = 0
+
+  constructor(audioFileData: Uint8Array) {
+    this.audioFileData = audioFileData
+  }
+
+  async initialize(config: AudioStreamConfig): Promise<void> {
+    this.config = config
+    this.currentPosition = 0
+  }
+
+  async start(): Promise<void> {
+    if (this.isPlaying) return
+
+    this.isPlaying = true
+    this.statusCallback?.(true)
+
+    // Simulate streaming by sending chunks at regular intervals
+    const chunkSize = (this.config?.bufferSize || 4096)
+    const interval = (chunkSize / (this.config?.sampleRate || 16000)) * 1000
+
+    this.intervalId = setInterval(() => {
+      if (this.currentPosition >= this.audioFileData.length) {
+        this.stop()
+        return
+      }
+
+      const chunk = this.audioFileData.slice(
+        this.currentPosition,
+        this.currentPosition + chunkSize
+      )
+
+      this.dataCallback?.({
+        data: chunk,
+        sampleRate: this.config?.sampleRate || 16000,
+        channels: this.config?.channels || 1,
+        timestamp: Date.now(),
+      })
+
+      this.currentPosition += chunkSize
+    }, interval)
+  }
+
+  async stop(): Promise<void> {
+    if (!this.isPlaying) return
+
+    if (this.intervalId) {
+      clearInterval(this.intervalId)
+    }
+    this.isPlaying = false
+    this.statusCallback?.(false)
+  }
+
+  isRecording(): boolean {
+    return this.isPlaying
+  }
+
+  onData(callback: (data: AudioStreamData) => void): void {
+    this.dataCallback = callback
+  }
+
+  onError(callback: (error: string) => void): void {
+    this.errorCallback = callback
+  }
+
+  onStatusChange(callback: (isRecording: boolean) => void): void {
+    this.statusCallback = callback
+  }
+
+  async release(): Promise<void> {
+    await this.stop()
+    this.config = null
+    this.dataCallback = undefined
+    this.errorCallback = undefined
+    this.statusCallback = undefined
+  }
+}
+```
+
+## Usage with RealtimeTranscriber
+
+Once you've implemented an adapter, use it with `RealtimeTranscriber`:
+
+```typescript
+import { RealtimeTranscriber } from 'whisper.rn/src/realtime-transcription'
+import { FileAudioAdapter } from './FileAudioAdapter'
+
+// Create your custom adapter
+const audioData = loadAudioFile() // Your audio loading logic
+const audioStream = new FileAudioAdapter(audioData)
+
+// Initialize transcriber with custom adapter
+const transcriber = new RealtimeTranscriber(
+  {
+    whisperContext,
+    audioStream, // Your custom adapter
+  },
+  {
+    audioSliceSec: 30,
+    transcribeOptions: { language: 'en' },
+  },
+  {
+    onTranscribe: (event) => {
+      console.log('Transcription:', event.data?.result)
+    },
+  }
+)
+
+await transcriber.start()
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Error Handling">
+    - Always wrap audio system calls in try-catch
+    - Use error callback instead of throwing
+    - Provide descriptive error messages
+    - Handle edge cases (already initialized, not initialized, etc.)
+  </Accordion>
+
+  <Accordion title="Memory Management">
+    - Release native resources in `release()`
+    - Clear callbacks to prevent memory leaks
+    - Consider audio buffer size vs. memory usage
+    - Use typed arrays (Uint8Array) for efficient data transfer
+  </Accordion>
+
+  <Accordion title="Threading & Performance">
+    - Audio callbacks should be fast (don't block)
+    - Avoid heavy processing in data callback
+    - Consider chunking large audio data
+    - Use appropriate buffer sizes for your use case
+  </Accordion>
+
+  <Accordion title="Data Format">
+    - Always provide 16-bit PCM data
+    - Ensure 16kHz sample rate (Whisper requirement)
+    - Use mono audio (1 channel)
+    - Include accurate timestamps
+  </Accordion>
+</AccordionGroup>
+
+## Testing Your Adapter
+
+Test your custom adapter thoroughly:
+
+```typescript
+import { YourCustomAdapter } from './YourCustomAdapter'
+
+describe('YourCustomAdapter', () => {
+  let adapter: YourCustomAdapter
+
+  beforeEach(() => {
+    adapter = new YourCustomAdapter()
+  })
+
+  afterEach(async () => {
+    await adapter.release()
+  })
+
+  test('initialize configures the adapter', async () => {
+    await adapter.initialize({ sampleRate: 16000, channels: 1 })
+    expect(adapter.isRecording()).toBe(false)
+  })
+
+  test('start begins recording', async () => {
+    await adapter.initialize({ sampleRate: 16000, channels: 1 })
+    await adapter.start()
+    expect(adapter.isRecording()).toBe(true)
+  })
+
+  test('onData callback receives audio data', async () => {
+    const dataCallback = jest.fn()
+    adapter.onData(dataCallback)
+    
+    await adapter.initialize({ sampleRate: 16000, channels: 1 })
+    await adapter.start()
+    
+    // Wait for data
+    await new Promise(resolve => setTimeout(resolve, 1000))
+    
+    expect(dataCallback).toHaveBeenCalled()
+    const data = dataCallback.mock.calls[0][0]
+    expect(data.sampleRate).toBe(16000)
+    expect(data.channels).toBe(1)
+  })
+
+  test('release cleans up resources', async () => {
+    await adapter.initialize({ sampleRate: 16000, channels: 1 })
+    await adapter.start()
+    await adapter.release()
+    expect(adapter.isRecording()).toBe(false)
+  })
+})
+```
+
+## Related
+
+- [Realtime Transcription](/api-reference/realtime-transcriber) - Using adapters with RealtimeTranscriber
+- [Memory Management](/advanced/memory-management) - SliceManager and resource cleanup
+- [VAD](/api-reference/init-whisper-vad) - Voice activity detection with realtime transcription

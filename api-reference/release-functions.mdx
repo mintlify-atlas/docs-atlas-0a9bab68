@@ -1,0 +1,316 @@
+---
+title: 'Release Functions'
+description: 'Free memory by releasing Whisper contexts'
+---
+
+## Overview
+
+Whisper contexts hold significant native memory for model weights and processing. Always release contexts when done to prevent memory leaks.
+
+## context.release()
+
+Release a single Whisper context and free its memory.
+
+```typescript
+context.release(): Promise<void>
+```
+
+### Example
+
+```typescript
+import { initWhisper } from 'whisper.rn'
+
+const whisperContext = await initWhisper({
+  filePath: require('../assets/ggml-base.bin'),
+})
+
+try {
+  // Use the context
+  const { promise } = whisperContext.transcribe(audioFile)
+  const { result } = await promise
+  console.log('Result:', result)
+} finally {
+  // Always release when done
+  await whisperContext.release()
+  console.log('Context released')
+}
+```
+
+### With React Hooks
+
+```typescript
+import { useEffect, useRef } from 'react'
+import { initWhisper, WhisperContext } from 'whisper.rn'
+
+function useWhisperContext() {
+  const contextRef = useRef<WhisperContext | null>(null)
+  
+  useEffect(() => {
+    // Cleanup on unmount
+    return () => {
+      contextRef.current?.release()
+      contextRef.current = null
+    }
+  }, [])
+  
+  const initContext = async () => {
+    // Release previous context if exists
+    if (contextRef.current) {
+      await contextRef.current.release()
+    }
+    
+    contextRef.current = await initWhisper({
+      filePath: require('../assets/ggml-tiny.en.bin'),
+    })
+  }
+  
+  return { context: contextRef.current, initContext }
+}
+```
+
+### Error Handling
+
+```typescript
+try {
+  await whisperContext.release()
+} catch (error) {
+  console.error('Failed to release context:', error)
+  // Context may already be released or invalid
+}
+```
+
+---
+
+## releaseAllWhisper()
+
+Release all active Whisper contexts at once. Useful for cleanup during app shutdown or when managing multiple contexts.
+
+```typescript
+function releaseAllWhisper(): Promise<void>
+```
+
+### Example
+
+```typescript
+import { initWhisper, releaseAllWhisper } from 'whisper.rn'
+
+// Create multiple contexts
+const context1 = await initWhisper({
+  filePath: require('../assets/ggml-tiny.en.bin'),
+})
+
+const context2 = await initWhisper({
+  filePath: require('../assets/ggml-base.bin'),
+})
+
+// Use both contexts
+const [result1, result2] = await Promise.all([
+  context1.transcribe(audioFile1).promise,
+  context2.transcribe(audioFile2).promise,
+])
+
+// Release all at once
+await releaseAllWhisper()
+console.log('All contexts released')
+```
+
+### With App State Management
+
+```typescript
+import { AppState } from 'react-native'
+import { releaseAllWhisper } from 'whisper.rn'
+
+AppState.addEventListener('change', async (nextAppState) => {
+  if (nextAppState === 'background') {
+    // Release all contexts when app goes to background
+    await releaseAllWhisper()
+    console.log('Released all contexts on background')
+  }
+})
+```
+
+---
+
+## Best Practices
+
+### 1. Always Release in Finally Blocks
+
+```typescript
+let context = null
+try {
+  context = await initWhisper({ filePath: modelPath })
+  const { promise } = context.transcribe(audioFile)
+  await promise
+} catch (error) {
+  console.error('Error:', error)
+} finally {
+  if (context) {
+    await context.release()
+  }
+}
+```
+
+### 2. Release Before Re-initialization
+
+```typescript
+let currentContext: WhisperContext | null = null
+
+async function switchModel(modelPath: string) {
+  // Release old context first
+  if (currentContext) {
+    await currentContext.release()
+  }
+  
+  // Initialize new context
+  currentContext = await initWhisper({ filePath: modelPath })
+}
+```
+
+### 3. Track Active Contexts
+
+```typescript
+const activeContexts = new Set<WhisperContext>()
+
+async function createContext(modelPath: string) {
+  const context = await initWhisper({ filePath: modelPath })
+  activeContexts.add(context)
+  return context
+}
+
+async function releaseContext(context: WhisperContext) {
+  await context.release()
+  activeContexts.delete(context)
+}
+
+async function cleanup() {
+  // Release all tracked contexts
+  await Promise.all(
+    Array.from(activeContexts).map(ctx => ctx.release())
+  )
+  activeContexts.clear()
+}
+```
+
+### 4. Handle Concurrent Operations
+
+```typescript
+let transcriptionInProgress = false
+let pendingRelease = false
+
+async function transcribeWithCleanup(
+  context: WhisperContext,
+  audioFile: string
+) {
+  if (transcriptionInProgress) {
+    throw new Error('Transcription already in progress')
+  }
+  
+  transcriptionInProgress = true
+  
+  try {
+    const { promise } = context.transcribe(audioFile)
+    return await promise
+  } finally {
+    transcriptionInProgress = false
+    
+    // Release if pending
+    if (pendingRelease) {
+      await context.release()
+      pendingRelease = false
+    }
+  }
+}
+```
+
+## Memory Considerations
+
+### Model Sizes and Memory Usage
+
+Different models require different amounts of memory:
+
+- **tiny/tiny.en**: ~75 MB
+- **base/base.en**: ~150 MB  
+- **small/small.en**: ~500 MB
+- **medium/medium.en**: ~1.5 GB
+- **large**: ~3 GB
+
+<Warning>
+  Large models may require the Extended Virtual Addressing entitlement on iOS. Always release contexts promptly to avoid memory pressure.
+</Warning>
+
+### Multiple Contexts
+
+```typescript
+// Not recommended: Multiple large contexts
+const ctx1 = await initWhisper({ filePath: 'ggml-medium.bin' })
+const ctx2 = await initWhisper({ filePath: 'ggml-large.bin' })
+// ~4.5 GB memory used!
+
+// Better: Release between uses
+const ctx1 = await initWhisper({ filePath: 'ggml-medium.bin' })
+await ctx1.transcribe(file1).promise
+await ctx1.release()
+
+const ctx2 = await initWhisper({ filePath: 'ggml-large.bin' })
+await ctx2.transcribe(file2).promise
+await ctx2.release()
+```
+
+## Platform-Specific Notes
+
+### iOS
+
+- Memory is released asynchronously by the system
+- Monitor memory warnings with `AppState` events
+- Use Instruments to track native memory usage
+
+### Android
+
+- Java garbage collector does not track native memory
+- Must explicitly call `release()` to free native resources
+- Monitor with Android Profiler
+
+## Error Scenarios
+
+### Double Release
+
+```typescript
+const context = await initWhisper({ filePath: modelPath })
+
+await context.release() // OK
+await context.release() // May throw error - context already released
+```
+
+### Using Released Context
+
+```typescript
+const context = await initWhisper({ filePath: modelPath })
+await context.release()
+
+// This will fail - context is released
+try {
+  await context.transcribe(audioFile)
+} catch (error) {
+  console.error('Cannot use released context:', error)
+}
+```
+
+### Aborting During Release
+
+```typescript
+const { stop, promise } = context.transcribe(audioFile)
+
+// Don't release while transcribing
+try {
+  await stop() // Stop first
+  await promise.catch(() => {}) // Wait for abort to complete
+} finally {
+  await context.release() // Then release
+}
+```
+
+## See Also
+
+- [initWhisper()](/api-reference/init-whisper) - Initialize contexts
+- [WhisperContext](/api-reference/whisper-context) - Context methods
+- [WhisperVadContext](/api-reference/whisper-vad-context) - Voice Activity Detection context (also requires release)

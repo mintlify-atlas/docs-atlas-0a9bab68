@@ -1,0 +1,714 @@
+---
+title: 'Performance'
+description: 'Threading, GPU/Metal acceleration, benchmarking, and optimization techniques'
+---
+
+## Overview
+
+whisper.rn performance depends on model size, hardware acceleration, threading configuration, and audio processing strategies. This guide covers optimization techniques for production deployments.
+
+## Threading Configuration
+
+### Default Thread Count
+
+whisper.rn automatically determines optimal thread count based on device capabilities:
+
+```typescript
+// Default behavior (from NativeRNWhisper.ts:10-11)
+maxThreads?: number  // Default: 2 for 4-core devices, 4 for more cores
+```
+
+**Implementation:**
+- 4 cores or fewer: **2 threads**
+- More than 4 cores: **4 threads**
+
+### Custom Thread Count
+
+Override the default for specific use cases:
+
+```typescript
+import { initWhisper } from 'whisper.rn'
+
+const context = await initWhisper({
+  filePath: require('../assets/model.bin'),
+})
+
+// Transcribe with custom thread count
+const { promise } = context.transcribe(audioFile, {
+  maxThreads: 8, // Use 8 threads
+  language: 'en',
+})
+```
+
+### Thread Count Optimization
+
+Find the optimal thread count for your device using benchmarks:
+
+```typescript
+async function findOptimalThreads(context: WhisperContext) {
+  const results = []
+  
+  // Test 1 to 8 threads
+  for (let threads = 1; threads <= 8; threads++) {
+    const bench = await context.bench(threads)
+    
+    results.push({
+      threads,
+      totalTime: bench.encodeMs + bench.decodeMs,
+      encodeTime: bench.encodeMs,
+      decodeTime: bench.decodeMs,
+    })
+    
+    console.log(`${threads} threads: ${bench.encodeMs + bench.decodeMs}ms total`)
+  }
+  
+  // Find fastest configuration
+  const optimal = results.reduce((best, current) =>
+    current.totalTime < best.totalTime ? current : best
+  )
+  
+  console.log('Optimal thread count:', optimal.threads)
+  return optimal.threads
+}
+
+// Usage
+const optimalThreads = await findOptimalThreads(context)
+
+// Use in production
+const { promise } = context.transcribe(audioFile, {
+  maxThreads: optimalThreads,
+})
+```
+
+<Info>
+Benchmark results are stored in the context (index.ts:603-615). The `nThreads` field in the result shows the tested thread count.
+</Info>
+
+### Parallel Processing
+
+Process multiple audio segments in parallel using `nProcessors`:
+
+```typescript
+const { promise } = context.transcribe(audioFile, {
+  maxThreads: 4,
+  nProcessors: 2, // Use 2 processors for parallel processing (NativeRNWhisper.ts:12-13)
+  language: 'en',
+})
+```
+
+<Warning>
+`nProcessors` defaults to 1, which uses `whisper_full()`. Values > 1 use `whisper_full_parallel()`, which may increase memory usage.
+</Warning>
+
+### Threading Best Practices
+
+**Low-end devices (4 cores or fewer):**
+```typescript
+{
+  maxThreads: 2,
+  nProcessors: 1,
+}
+```
+
+**Mid-range devices (6-8 cores):**
+```typescript
+{
+  maxThreads: 4,
+  nProcessors: 1,
+}
+```
+
+**High-end devices (8+ cores):**
+```typescript
+{
+  maxThreads: 6,
+  nProcessors: 2,
+}
+```
+
+## GPU and Metal Acceleration
+
+### Enabling GPU Acceleration
+
+whisper.rn supports Metal (iOS/tvOS) and GPU acceleration:
+
+```typescript
+const context = await initWhisper({
+  filePath: modelPath,
+  useGpu: true,          // Enable Metal/GPU (default: true)
+  useFlashAttn: false,   // Flash Attention (default: false)
+})
+
+// Check if GPU is active
+if (context.gpu) {
+  console.log('🚀 GPU acceleration active')
+} else {
+  console.log('⚠️ GPU not available:', context.reasonNoGPU)
+}
+```
+
+### GPU Availability Checks
+
+```typescript
+function checkAccelerationStatus(context: WhisperContext) {
+  const status = {
+    gpu: context.gpu,
+    reason: context.reasonNoGPU,
+    recommendation: '',
+  }
+  
+  if (!context.gpu) {
+    // Common reasons from index.ts:264-266
+    if (context.reasonNoGPU.includes('Core ML')) {
+      status.recommendation = 'Enable Core ML or use Metal'
+    } else if (context.reasonNoGPU.includes('Metal')) {
+      status.recommendation = 'Device does not support Metal'
+    } else if (context.reasonNoGPU.includes('disabled')) {
+      status.recommendation = 'Set useGpu: true in options'
+    }
+  }
+  
+  return status
+}
+```
+
+### Flash Attention
+
+Flash Attention optimizes memory-intensive attention operations:
+
+```typescript
+const context = await initWhisper({
+  filePath: modelPath,
+  useGpu: true,
+  useFlashAttn: true, // Enable Flash Attention (index.ts:640)
+})
+```
+
+<Note>
+Flash Attention only works when GPU is available. It's automatically ignored if `useGpu: false`.
+</Note>
+
+**When to use Flash Attention:**
+- ✅ Large models (medium, large)
+- ✅ Long audio files (> 60 seconds)
+- ✅ High-end devices with ample GPU memory
+- ❌ Small models (tiny, base) - minimal benefit
+- ❌ Short audio (< 30 seconds)
+
+### Disabling GPU Acceleration
+
+Force CPU-only mode:
+
+```typescript
+const context = await initWhisper({
+  filePath: modelPath,
+  useGpu: false,        // Disable all GPU acceleration
+  useCoreMLIos: false,  // Disable Core ML
+})
+```
+
+**Reasons to disable GPU:**
+- Debugging performance issues
+- Comparing CPU vs GPU performance
+- Device-specific GPU bugs
+- Battery optimization (GPU uses more power)
+
+### Metal Shaders
+
+Metal shaders are compiled into the iOS framework:
+
+**Pre-built framework** (`ios/rnwhisper.xcframework`):
+- Includes `.metallib` shader library
+- No additional configuration needed
+
+**Building from source** (`RNWHISPER_BUILD_FROM_SOURCE=1`):
+- Shaders compiled automatically during pod install
+- Disable with: `ENV['RNWHISPER_DISABLE_METAL'] = '1'`
+
+## Core ML Acceleration (iOS)
+
+Core ML provides the best performance on iOS devices with Neural Engine (A12+).
+
+### Core ML Performance Impact
+
+| Model | CPU Only | Core ML | Speedup |
+|-------|----------|---------|----------|
+| tiny.en | 1.0x realtime | 3-4x realtime | **3-4x** |
+| base.en | 0.8x realtime | 2-3x realtime | **2.5-3.5x** |
+| small | 0.5x realtime | 1.5-2x realtime | **3-4x** |
+| medium | 0.2x realtime | 0.8-1x realtime | **4-5x** |
+
+### Enabling Core ML
+
+```typescript
+const context = await initWhisper({
+  filePath: 'file:///path/to/ggml-tiny.en.bin',
+  useCoreMLIos: true, // Enable Core ML (default: true, index.ts:636)
+})
+
+if (context.gpu) {
+  console.log('Using Core ML Neural Engine')
+}
+```
+
+<Info>
+Core ML requires `.mlmodelc` files in the same directory as the GGML model. See [Models - Core ML](/core-concepts/models#core-ml-acceleration-ios) for setup details.
+</Info>
+
+### Core ML vs Metal Priority
+
+When both are enabled, **Core ML takes priority**:
+
+```typescript
+// Core ML is used if available
+const context1 = await initWhisper({
+  filePath: modelPath,
+  useGpu: true,        // Metal
+  useCoreMLIos: true,  // Core ML (takes priority)
+})
+
+// Force Metal by disabling Core ML
+const context2 = await initWhisper({
+  filePath: modelPath,
+  useGpu: true,        // Metal
+  useCoreMLIos: false, // Disable Core ML
+})
+```
+
+## Benchmarking
+
+### Running Benchmarks
+
+The `bench()` method tests performance with different thread counts (index.ts:603-615):
+
+```typescript
+const benchResult = await context.bench(8) // Test up to 8 threads
+
+console.log('Benchmark Results:')
+console.log('Config:', benchResult.config)
+console.log('Threads:', benchResult.nThreads)
+console.log('Encode time:', benchResult.encodeMs, 'ms')
+console.log('Decode time:', benchResult.decodeMs, 'ms')
+console.log('Batch time:', benchResult.batchMs, 'ms')
+console.log('Prompt time:', benchResult.promptMs, 'ms')
+```
+
+**Output example:**
+```typescript
+{
+  config: 'tiny.en',
+  nThreads: 4,
+  encodeMs: 320,
+  decodeMs: 180,
+  batchMs: 45,
+  promptMs: 12,
+}
+```
+
+### Comprehensive Benchmark Suite
+
+```typescript
+async function runComprehensiveBenchmark(context: WhisperContext) {
+  console.log('Starting comprehensive benchmark...')
+  
+  const results = {
+    model: 'unknown',
+    device: Platform.OS,
+    gpu: context.gpu,
+    threads: [] as any[],
+  }
+  
+  // Test thread counts from 1 to 8
+  for (let i = 1; i <= 8; i++) {
+    const bench = await context.bench(i)
+    
+    results.threads.push({
+      count: bench.nThreads,
+      totalTime: bench.encodeMs + bench.decodeMs,
+      encodeMs: bench.encodeMs,
+      decodeMs: bench.decodeMs,
+      batchMs: bench.batchMs,
+      promptMs: bench.promptMs,
+    })
+    
+    results.model = bench.config
+  }
+  
+  // Find optimal configuration
+  const optimal = results.threads.reduce((best, current) =>
+    current.totalTime < best.totalTime ? current : best
+  )
+  
+  console.log('Benchmark Results:')
+  console.log('Model:', results.model)
+  console.log('GPU:', results.gpu)
+  console.log('Optimal threads:', optimal.count)
+  console.log('Best time:', optimal.totalTime, 'ms')
+  
+  // Performance rating
+  const speedRating = optimal.totalTime < 500 ? '🚀 Excellent' :
+                      optimal.totalTime < 1000 ? '✅ Good' :
+                      optimal.totalTime < 2000 ? '⚠️ Fair' : '❌ Slow'
+  console.log('Performance:', speedRating)
+  
+  return results
+}
+```
+
+### Real-World Performance Testing
+
+```typescript
+async function testRealWorldPerformance(
+  context: WhisperContext,
+  audioFile: string,
+  options: TranscribeOptions
+) {
+  console.log('Testing real-world performance...')
+  
+  const startTime = Date.now()
+  const startMemory = performance.memory?.usedJSHeapSize || 0
+  
+  const { promise } = context.transcribe(audioFile, options)
+  const result = await promise
+  
+  const endTime = Date.now()
+  const endMemory = performance.memory?.usedJSHeapSize || 0
+  
+  const stats = {
+    duration: endTime - startTime,
+    memoryUsed: (endMemory - startMemory) / (1024 * 1024), // MB
+    textLength: result.result.length,
+    segments: result.segments.length,
+  }
+  
+  console.log('Real-world Performance:')
+  console.log('Duration:', stats.duration, 'ms')
+  console.log('Memory:', stats.memoryUsed.toFixed(2), 'MB')
+  console.log('Text length:', stats.textLength, 'chars')
+  console.log('Segments:', stats.segments)
+  
+  return stats
+}
+```
+
+<Warning>
+Always run benchmarks in **Release mode**. Debug builds are 5-10x slower and not representative of production performance.
+</Warning>
+
+## Memory Optimization
+
+### Model Selection for Memory
+
+Choose models based on available memory:
+
+```typescript
+import { Platform } from 'react-native'
+
+function selectModelForDevice() {
+  // Get total device memory (iOS example)
+  const totalMemoryMB = Platform.OS === 'ios'
+    ? 2048 // Example: 2GB device
+    : 4096 // Example: 4GB device
+  
+  if (totalMemoryMB < 2048) {
+    return 'ggml-tiny.en-q8_0.bin' // ~40 MB
+  } else if (totalMemoryMB < 4096) {
+    return 'ggml-base.en-q8_0.bin' // ~75 MB
+  } else if (totalMemoryMB < 6144) {
+    return 'ggml-small-q5_0.bin'   // ~160 MB
+  } else {
+    return 'ggml-medium-q5_0.bin'  // ~500 MB
+  }
+}
+```
+
+### Audio Slicing for Long Files
+
+Process long audio in chunks to reduce memory usage:
+
+```typescript
+import { RealtimeTranscriber } from 'whisper.rn/realtime-transcription'
+
+const transcriber = new RealtimeTranscriber(
+  { whisperContext, audioStream, fs: RNFS },
+  {
+    audioSliceSec: 25,        // Process 25-second chunks
+    maxSlicesInMemory: 3,     // Keep only 3 chunks in memory (index.ts:184)
+  },
+  {
+    onTranscribe: (event) => {
+      if (event.memoryUsage) {
+        console.log('Memory usage:', event.memoryUsage.estimatedMB, 'MB')
+      }
+    },
+  }
+)
+```
+
+### Context Reuse
+
+Reuse contexts instead of creating new ones:
+
+```typescript
+// ❌ Bad: Creating new context for each transcription
+for (const audioFile of audioFiles) {
+  const context = await initWhisper({ filePath: modelPath })
+  await context.transcribe(audioFile).promise
+  await context.release() // Creates/destroys context repeatedly
+}
+
+// ✅ Good: Reuse single context
+const context = await initWhisper({ filePath: modelPath })
+for (const audioFile of audioFiles) {
+  await context.transcribe(audioFile).promise
+}
+await context.release() // Single context lifecycle
+```
+
+### Memory Monitoring
+
+```typescript
+function monitorMemoryUsage() {
+  if (Platform.OS === 'ios') {
+    const { memoryUsage } = require('react-native-device-info')
+    
+    const used = memoryUsage()
+    console.log('Memory used:', (used / (1024 * 1024)).toFixed(2), 'MB')
+    
+    if (used > 500 * 1024 * 1024) { // 500 MB
+      console.warn('High memory usage detected')
+    }
+  }
+}
+
+// Monitor during transcription
+const { promise } = context.transcribe(audioFile, {
+  onProgress: (progress) => {
+    if (progress % 10 === 0) {
+      monitorMemoryUsage()
+    }
+  },
+})
+```
+
+## Battery Optimization
+
+### Power-Efficient Settings
+
+```typescript
+// Battery-saving configuration
+const batteryOptimizedContext = await initWhisper({
+  filePath: 'ggml-tiny.en-q8_0.bin', // Smallest model
+  useGpu: false,                     // CPU uses less power
+  useCoreMLIos: false,               // Disable Neural Engine
+})
+
+const { promise } = batteryOptimizedContext.transcribe(audioFile, {
+  maxThreads: 2, // Fewer threads = less CPU load
+})
+```
+
+### Adaptive Performance
+
+Adjust settings based on battery level:
+
+```typescript
+import { getBatteryLevel } from 'react-native-device-info'
+
+async function getOptimizedSettings() {
+  const batteryLevel = await getBatteryLevel()
+  
+  if (batteryLevel < 0.2) { // Below 20%
+    return {
+      filePath: 'ggml-tiny.en-q8_0.bin',
+      useGpu: false,
+      maxThreads: 2,
+    }
+  } else if (batteryLevel < 0.5) { // Below 50%
+    return {
+      filePath: 'ggml-base.en-q8_0.bin',
+      useGpu: true,
+      maxThreads: 3,
+    }
+  } else { // Above 50%
+    return {
+      filePath: 'ggml-base.en-q8_0.bin',
+      useGpu: true,
+      useCoreMLIos: true,
+      maxThreads: 4,
+    }
+  }
+}
+```
+
+## Platform-Specific Optimizations
+
+### iOS Optimizations
+
+```typescript
+import { AudioSessionIos } from 'whisper.rn'
+
+// Configure audio session for better performance
+await AudioSessionIos.setCategory(
+  AudioSessionIos.Category.PlayAndRecord,
+  [
+    AudioSessionIos.CategoryOption.DefaultToSpeaker,
+    AudioSessionIos.CategoryOption.AllowBluetooth,
+  ]
+)
+await AudioSessionIos.setMode(AudioSessionIos.Mode.Measurement) // Low-latency mode
+
+// Use Core ML for best performance
+const context = await initWhisper({
+  filePath: modelPath,
+  useCoreMLIos: true,  // Neural Engine acceleration
+  useGpu: true,        // Metal fallback
+})
+```
+
+### Android Optimizations
+
+```typescript
+import { Platform } from 'react-native'
+
+if (Platform.OS === 'android') {
+  // Request high-performance mode
+  // (requires native module implementation)
+  // NativeModules.PerformanceManager.setHighPerformanceMode(true)
+  
+  // Use appropriate thread count for Android
+  const cpuCores = Platform.constants?.cpuCores || 4
+  const optimalThreads = Math.min(cpuCores, 4)
+  
+  const { promise } = context.transcribe(audioFile, {
+    maxThreads: optimalThreads,
+  })
+}
+```
+
+## Performance Monitoring
+
+### Built-in Progress Tracking
+
+```typescript
+let lastProgressTime = Date.now()
+
+const { promise } = context.transcribe(audioFile, {
+  onProgress: (progress) => {
+    const now = Date.now()
+    const elapsed = now - lastProgressTime
+    
+    console.log(`Progress: ${progress}% (+${elapsed}ms)`)
+    lastProgressTime = now
+    
+    // Detect stalls
+    if (elapsed > 5000) {
+      console.warn('Transcription may be stalled')
+    }
+  },
+})
+```
+
+### Segment Processing Rate
+
+```typescript
+const { promise } = context.transcribe(audioFile, {
+  onNewSegments: (result) => {
+    const segmentsPerSecond = result.totalNNew / (Date.now() / 1000)
+    
+    console.log('New segments:', result.nNew)
+    console.log('Total segments:', result.totalNNew)
+    console.log('Processing rate:', segmentsPerSecond.toFixed(2), 'segments/s')
+  },
+})
+```
+
+## Best Practices
+
+### 1. Start with Benchmarks
+
+```typescript
+// Always benchmark first
+const optimalThreads = await findOptimalThreads(context)
+
+// Use results in production
+const settings = {
+  maxThreads: optimalThreads,
+  // ... other options
+}
+```
+
+### 2. Enable Hardware Acceleration
+
+```typescript
+// ✅ Best: Enable all available acceleration
+const context = await initWhisper({
+  filePath: modelPath,
+  useGpu: true,        // Metal/GPU
+  useCoreMLIos: true,  // Core ML (iOS)
+})
+
+// Check what's actually being used
+console.log('GPU active:', context.gpu)
+if (!context.gpu) {
+  console.log('Reason:', context.reasonNoGPU)
+}
+```
+
+### 3. Choose the Right Model
+
+```typescript
+// Real-time transcription: tiny or base
+const realtimeModel = 'ggml-tiny.en-q8_0.bin'
+
+// Batch transcription: small or medium
+const batchModel = 'ggml-small-q5_0.bin'
+
+// High accuracy: medium or large
+const highQualityModel = 'ggml-medium-q5_0.bin'
+```
+
+### 4. Use Release Builds
+
+```bash
+# iOS
+yarn example ios --mode Release
+
+# Android
+yarn example android --mode release
+```
+
+<Warning>
+Debug builds are 5-10x slower. Always test performance in Release mode.
+</Warning>
+
+### 5. Monitor and Log Performance
+
+```typescript
+const startTime = Date.now()
+
+const { promise } = context.transcribe(audioFile, {
+  onProgress: (progress) => {
+    const elapsed = Date.now() - startTime
+    console.log(`${progress}% in ${elapsed}ms`)
+  },
+})
+
+const result = await promise
+const totalTime = Date.now() - startTime
+
+console.log('Transcription completed in', totalTime, 'ms')
+console.log('Text length:', result.result.length)
+console.log('Segments:', result.segments.length)
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Contexts" icon="layer-group" href="/core-concepts/contexts">
+    Learn about context lifecycle and management
+  </Card>
+  <Card title="API Reference" icon="code" href="/api-reference/whisper-context">
+    Explore complete API documentation
+  </Card>
+</CardGroup>

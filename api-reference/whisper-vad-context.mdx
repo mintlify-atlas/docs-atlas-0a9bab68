@@ -1,0 +1,232 @@
+---
+title: WhisperVadContext
+description: Voice Activity Detection context class for detecting speech segments in audio
+---
+
+The `WhisperVadContext` class provides methods for detecting speech segments in audio files and data using the Silero VAD model.
+
+## Properties
+
+<ParamField path="id" type="number">
+  Unique context identifier
+</ParamField>
+
+<ParamField path="gpu" type="boolean">
+  Whether GPU/Metal acceleration is active
+</ParamField>
+
+<ParamField path="reasonNoGPU" type="string">
+  Explanation if GPU is not available (empty string if GPU is active)
+</ParamField>
+
+## Methods
+
+### detectSpeech
+
+Detect speech segments in an audio file or base64-encoded WAV data.
+
+```typescript
+detectSpeech(
+  filePathOrBase64: string | number,
+  options?: VadOptions
+): Promise<VadSegment[]>
+```
+
+#### Parameters
+
+<ParamField path="filePathOrBase64" type="string | number" required>
+  Audio source to analyze:
+  
+  - File path: `'/path/to/audio.wav'`
+  - Base64 WAV: `'data:audio/wav;base64,...'`
+  - Asset: `require('./assets/audio.wav')`
+  
+  Note: Remote URLs (http/https) are not supported. Download the file first.
+</ParamField>
+
+<ParamField path="options" type="VadOptions">
+  Voice activity detection configuration options. See [VadOptions](/api-reference/vad-options) for details.
+</ParamField>
+
+#### Returns
+
+<ResponseField name="segments" type="Promise<VadSegment[]>">
+  Array of detected speech segments
+  
+  <Expandable title="VadSegment properties">
+    <ResponseField name="t0" type="number">
+      Start time of speech segment in milliseconds
+    </ResponseField>
+    
+    <ResponseField name="t1" type="number">
+      End time of speech segment in milliseconds
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+#### Example
+
+```typescript
+// Detect speech in a file
+const segments = await vadContext.detectSpeech('/path/to/audio.wav')
+
+console.log(`Found ${segments.length} speech segments`)
+segments.forEach((segment, i) => {
+  const duration = (segment.t1 - segment.t0) / 1000
+  console.log(`Segment ${i + 1}: ${segment.t0}ms - ${segment.t1}ms (${duration.toFixed(2)}s)`)
+})
+
+// Detect speech with custom options
+const segments = await vadContext.detectSpeech('/path/to/audio.wav', {
+  threshold: 0.6,
+  minSpeechDurationMs: 500,
+  minSilenceDurationMs: 200,
+})
+
+// Detect speech in base64 WAV data
+const base64Audio = 'data:audio/wav;base64,UklGRi...'
+const segments = await vadContext.detectSpeech(base64Audio)
+```
+
+---
+
+### detectSpeechData
+
+Detect speech segments in raw audio data (base64-encoded PCM or ArrayBuffer).
+
+```typescript
+detectSpeechData(
+  audioData: string | ArrayBuffer,
+  options?: VadOptions
+): Promise<VadSegment[]>
+```
+
+#### Parameters
+
+<ParamField path="audioData" type="string | ArrayBuffer" required>
+  Raw audio data:
+  
+  - Base64-encoded float32 PCM data (mono, 16kHz)
+  - ArrayBuffer containing 16-bit PCM data (mono, 16kHz)
+  
+  When using ArrayBuffer, the data is transferred efficiently via JSI bindings.
+</ParamField>
+
+<ParamField path="options" type="VadOptions">
+  Voice activity detection configuration options. See [VadOptions](/api-reference/vad-options) for details.
+</ParamField>
+
+#### Returns
+
+<ResponseField name="segments" type="Promise<VadSegment[]>">
+  Array of detected speech segments with `t0` (start time) and `t1` (end time) in milliseconds
+</ResponseField>
+
+#### Example
+
+```typescript
+// Detect speech in ArrayBuffer (efficient JSI transfer)
+const audioBuffer: ArrayBuffer = getAudioData() // 16-bit PCM, mono, 16kHz
+const segments = await vadContext.detectSpeechData(audioBuffer, {
+  threshold: 0.5,
+  minSpeechDurationMs: 250,
+})
+
+// Detect speech in base64-encoded PCM data
+const base64Pcm = 'AAECAw...' // float32 PCM base64
+const segments = await vadContext.detectSpeechData(base64Pcm)
+```
+
+---
+
+### release
+
+Release the VAD context and free its memory.
+
+```typescript
+release(): Promise<void>
+```
+
+#### Example
+
+```typescript
+// Always release the context when finished
+await vadContext.release()
+
+// Or use try-finally to ensure cleanup
+const vadContext = await initWhisperVad({
+  filePath: '/path/to/silero_vad.bin',
+})
+
+try {
+  const segments = await vadContext.detectSpeech('/path/to/audio.wav')
+  // Process segments...
+} finally {
+  await vadContext.release()
+}
+```
+
+## Complete Example
+
+```typescript
+import { initWhisperVad } from 'whisper.rn'
+
+async function detectSpeechInAudio() {
+  // Initialize VAD context
+  const vadContext = await initWhisperVad({
+    filePath: require('./assets/silero_vad.bin'),
+    useGpu: true,
+  })
+
+  console.log('GPU enabled:', vadContext.gpu)
+  if (!vadContext.gpu) {
+    console.log('Reason:', vadContext.reasonNoGPU)
+  }
+
+  try {
+    // Detect speech segments
+    const segments = await vadContext.detectSpeech(
+      '/path/to/audio.wav',
+      {
+        threshold: 0.5,
+        minSpeechDurationMs: 250,
+        minSilenceDurationMs: 100,
+        maxSpeechDurationS: 30,
+        speechPadMs: 30,
+      }
+    )
+
+    // Process results
+    console.log(`Detected ${segments.length} speech segments:`)
+    segments.forEach((segment, i) => {
+      const start = segment.t0 / 1000
+      const end = segment.t1 / 1000
+      const duration = end - start
+      console.log(`  ${i + 1}. ${start.toFixed(2)}s - ${end.toFixed(2)}s (${duration.toFixed(2)}s)`)
+    })
+  } finally {
+    // Clean up
+    await vadContext.release()
+  }
+}
+```
+
+## Audio Format Requirements
+
+- **Sample rate**: 16kHz
+- **Channels**: Mono (1 channel)
+- **Format**: 16-bit PCM (for ArrayBuffer) or float32 PCM (for base64)
+- **Supported inputs**: WAV files, base64-encoded WAV/PCM, ArrayBuffer
+
+## Notes
+
+- ArrayBuffer input uses efficient JSI bindings for better performance
+- Remote URLs are not supported; download files before processing
+- Always release contexts when finished to avoid memory leaks
+- Use `releaseAllWhisperVad()` to release all VAD contexts at once
+
+## Related
+
+- [initWhisperVad](/api-reference/init-whisper-vad) - Initialize a VAD context
+- [VadOptions](/api-reference/vad-options) - Detection configuration options
+- [releaseAllWhisperVad](/api-reference/release-functions) - Release all VAD contexts

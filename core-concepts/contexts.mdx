@@ -1,0 +1,387 @@
+---
+title: 'Contexts'
+description: 'Understanding WhisperContext and WhisperVadContext lifecycle and management'
+---
+
+## Overview
+
+whisper.rn uses a context-based architecture to manage speech recognition and voice activity detection resources. Contexts encapsulate native resources (models, memory, compute threads) and must be explicitly managed to prevent memory leaks.
+
+## WhisperContext
+
+The `WhisperContext` class represents a loaded Whisper model and provides methods for transcribing audio.
+
+### Initialization
+
+Create a context by loading a GGML model file:
+
+```typescript
+import { initWhisper } from 'whisper.rn'
+
+const whisperContext = await initWhisper({
+  filePath: 'file:///path/to/ggml-tiny.en.bin',
+  useGpu: true,              // Enable GPU/Metal acceleration (default: true)
+  useCoreMLIos: true,        // Enable Core ML on iOS (default: true)
+  useFlashAttn: false,       // Use Flash Attention (GPU only, default: false)
+})
+```
+
+<Note>
+The `initWhisper` function automatically installs JSI bindings on first call, enabling efficient ArrayBuffer transfers for audio data.
+</Note>
+
+### Context Properties
+
+Every `WhisperContext` instance has these properties:
+
+```typescript
+interface WhisperContext {
+  id: number           // Unique context identifier (index.ts:262)
+  ptr: number          // Native context pointer (index.ts:260)
+  gpu: boolean         // Whether GPU/Metal acceleration is active (index.ts:264)
+  reasonNoGPU: string  // Explanation if GPU is not available (index.ts:266)
+}
+```
+
+**GPU Acceleration Status:**
+
+Check if hardware acceleration is active:
+
+```typescript
+if (whisperContext.gpu) {
+  console.log('Using GPU/Metal acceleration')
+} else {
+  console.log('GPU not available:', whisperContext.reasonNoGPU)
+  // Common reasons: "Core ML not enabled", "Metal not supported", "GPU disabled in options"
+}
+```
+
+### Transcription Methods
+
+#### transcribe()
+
+Transcribe audio files or base64-encoded WAV data (index.ts:362-388):
+
+```typescript
+const { stop, promise } = whisperContext.transcribe(
+  'file:///path/to/audio.wav',
+  {
+    language: 'en',
+    maxThreads: 4,
+    onProgress: (progress) => {
+      console.log(`Progress: ${progress}%`)
+    },
+    onNewSegments: (result) => {
+      console.log(`New segments: ${result.nNew}`)
+      console.log(`Text: ${result.result}`)
+    },
+  }
+)
+
+const result = await promise
+console.log('Transcription:', result.result)
+```
+
+<Accordion title="Supported file formats">
+  - **File paths**: `file:///absolute/path/to/audio.wav`
+  - **Base64 WAV**: `data:audio/wav;base64,...`
+  - **Assets**: `require('../assets/audio.wav')`
+  - **HTTP URLs**: Not supported (download first)
+</Accordion>
+
+#### transcribeData()
+
+Transcribe raw audio data using base64 or ArrayBuffer (index.ts:393-408):
+
+```typescript
+// Using ArrayBuffer (fastest - uses JSI)
+const audioBuffer: ArrayBuffer = ... // 16-bit PCM, mono, 16kHz
+const { stop, promise } = whisperContext.transcribeData(audioBuffer, {
+  language: 'en',
+})
+
+// Using base64-encoded float32 PCM
+const base64Data: string = ... // base64-encoded float32 PCM
+const { stop, promise } = whisperContext.transcribeData(base64Data, {
+  language: 'en',
+})
+```
+
+<Info>
+When using `ArrayBuffer`, the data is transferred directly to native code via JSI (index.ts:402-405), bypassing JSON serialization for better performance.
+</Info>
+
+#### Stopping Transcription
+
+All transcription methods return a `stop()` function:
+
+```typescript
+const { stop, promise } = whisperContext.transcribe(filePath, options)
+
+// Stop transcription at any time
+setTimeout(() => {
+  stop() // Calls RNWhisper.abortTranscribe (index.ts:332)
+}, 5000)
+
+const result = await promise
+if (result.isAborted) {
+  console.log('Transcription was aborted')
+}
+```
+
+### Benchmarking
+
+Test transcription performance with different thread counts (index.ts:603-615):
+
+```typescript
+const benchResult = await whisperContext.bench(8) // Test with up to 8 threads
+
+console.log('Model config:', benchResult.config)
+console.log('Optimal threads:', benchResult.nThreads)
+console.log('Encoder time:', benchResult.encodeMs, 'ms')
+console.log('Decoder time:', benchResult.decodeMs, 'ms')
+console.log('Batch time:', benchResult.batchMs, 'ms')
+console.log('Prompt time:', benchResult.promptMs, 'ms')
+```
+
+<Warning>
+Run benchmarks in Release mode for accurate performance measurements. Debug builds are significantly slower.
+</Warning>
+
+### Context Cleanup
+
+Always release contexts when done to free native resources (index.ts:617-619):
+
+```typescript
+// Release a single context
+await whisperContext.release()
+
+// Release all active contexts
+import { releaseAllWhisper } from 'whisper.rn'
+await releaseAllWhisper() // Calls RNWhisper.releaseAllContexts() (index.ts:718-722)
+```
+
+<Warning>
+Failing to release contexts causes memory leaks. The native models remain in memory until explicitly released.
+</Warning>
+
+## WhisperVadContext
+
+The `WhisperVadContext` class provides Voice Activity Detection using the Silero VAD model.
+
+### Initialization
+
+Create a VAD context with a Silero VAD model file (index.ts:831-864):
+
+```typescript
+import { initWhisperVad } from 'whisper.rn'
+
+const vadContext = await initWhisperVad({
+  filePath: 'file:///path/to/ggml-silero-v6.2.0.bin',
+  useGpu: true,     // Enable GPU acceleration (iOS only, default: true)
+  nThreads: 4,      // Number of threads (default: 2 for 4-core, 4 for more)
+})
+```
+
+### Context Properties
+
+VAD contexts have similar properties to Whisper contexts (index.ts:751-762):
+
+```typescript
+interface WhisperVadContext {
+  id: number           // Unique context identifier
+  gpu: boolean         // Whether GPU acceleration is active
+  reasonNoGPU: string  // Explanation if GPU is not available
+}
+```
+
+### Speech Detection Methods
+
+#### detectSpeech()
+
+Detect speech segments in audio files (index.ts:768-797):
+
+```typescript
+const segments = await vadContext.detectSpeech(
+  'file:///path/to/audio.wav',
+  {
+    threshold: 0.5,              // Speech probability threshold (0.0-1.0)
+    minSpeechDurationMs: 250,    // Minimum speech duration
+    minSilenceDurationMs: 100,   // Minimum silence to end speech
+    maxSpeechDurationS: 30,      // Maximum segment duration
+    speechPadMs: 30,             // Padding around segments
+    samplesOverlap: 0.1,         // Window overlap (0.0-1.0)
+  }
+)
+
+segments.forEach((segment, i) => {
+  console.log(`Segment ${i + 1}: ${segment.t0}s - ${segment.t1}s`)
+})
+```
+
+#### detectSpeechData()
+
+Detect speech in raw audio data (index.ts:802-819):
+
+```typescript
+// Using ArrayBuffer (fastest - uses JSI)
+const audioBuffer: ArrayBuffer = ... // 16-bit PCM, mono, 16kHz
+const segments = await vadContext.detectSpeechData(audioBuffer, {
+  threshold: 0.5,
+})
+
+// Using base64-encoded float32 PCM
+const base64Data: string = ...
+const segments = await vadContext.detectSpeechData(base64Data, {
+  threshold: 0.5,
+})
+```
+
+<Info>
+VAD contexts use the same JSI optimization as Whisper contexts for ArrayBuffer inputs (index.ts:806-816).
+</Info>
+
+### VAD Context Cleanup
+
+Release VAD contexts when done (index.ts:821-823):
+
+```typescript
+// Release a single VAD context
+await vadContext.release()
+
+// Release all active VAD contexts
+import { releaseAllWhisperVad } from 'whisper.rn'
+await releaseAllWhisperVad() // Calls RNWhisper.releaseAllVadContexts() (index.ts:870-874)
+```
+
+## Context Lifecycle Best Practices
+
+### Single Instance Pattern
+
+```typescript
+let whisperContext: WhisperContext | null = null
+
+async function getWhisperContext() {
+  if (!whisperContext) {
+    whisperContext = await initWhisper({
+      filePath: require('../assets/ggml-tiny.en.bin'),
+    })
+  }
+  return whisperContext
+}
+
+// Cleanup on app exit
+const cleanup = async () => {
+  if (whisperContext) {
+    await whisperContext.release()
+    whisperContext = null
+  }
+}
+```
+
+### Multiple Contexts
+
+You can create multiple contexts with different models:
+
+```typescript
+const contexts = {
+  tiny: await initWhisper({ filePath: 'ggml-tiny.en.bin' }),
+  base: await initWhisper({ filePath: 'ggml-base.en.bin' }),
+}
+
+// Use different models for different tasks
+const quickResult = await contexts.tiny.transcribe(shortAudio).promise
+const accurateResult = await contexts.base.transcribe(longAudio).promise
+
+// Cleanup all
+await releaseAllWhisper()
+```
+
+<Warning>
+Multiple large models can consume significant memory. Monitor memory usage on lower-end devices.
+</Warning>
+
+### Error Handling
+
+```typescript
+try {
+  const context = await initWhisper({
+    filePath: 'file:///path/to/model.bin',
+  })
+  
+  if (!context.gpu) {
+    console.warn('GPU not available:', context.reasonNoGPU)
+  }
+  
+  const { promise } = context.transcribe(audioFile, options)
+  const result = await promise
+  
+  if (result.isAborted) {
+    console.log('Transcription was aborted by user')
+  } else {
+    console.log('Result:', result.result)
+  }
+  
+} catch (error) {
+  console.error('Transcription failed:', error)
+} finally {
+  // Always cleanup
+  await context?.release()
+}
+```
+
+## Thread Safety
+
+Contexts are thread-safe for concurrent transcription jobs:
+
+```typescript
+// Multiple transcriptions can run in parallel on the same context
+const job1 = whisperContext.transcribe(audio1, options)
+const job2 = whisperContext.transcribe(audio2, options)
+
+const [result1, result2] = await Promise.all([
+  job1.promise,
+  job2.promise,
+])
+```
+
+<Info>
+Jobs are managed internally with unique `jobId` values (index.ts:288, index.ts:423). The native layer handles concurrent job execution.
+</Info>
+
+## Memory Management
+
+### Context Size Estimates
+
+| Model Size | Memory Usage (approx) |
+|------------|----------------------|
+| tiny       | ~75 MB               |
+| base       | ~140 MB              |
+| small      | ~460 MB              |
+| medium     | ~1.5 GB              |
+| large      | ~2.9 GB              |
+
+<Note>
+Quantized models (q5, q8) use less memory while maintaining good accuracy.
+</Note>
+
+### iOS Extended Virtual Addressing
+
+For `medium` and `large` models on iOS, enable the Extended Virtual Addressing capability:
+
+1. Open Xcode project
+2. Select your target
+3. Go to **Signing & Capabilities**
+4. Click **+ Capability**
+5. Add **Extended Virtual Addressing**
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Audio Formats" icon="file-audio" href="/core-concepts/audio-formats">
+    Learn about audio format requirements and conversion
+  </Card>
+  <Card title="Models" icon="brain" href="/core-concepts/models">
+    Explore GGML models, quantization, and Core ML
+  </Card>
+</CardGroup>

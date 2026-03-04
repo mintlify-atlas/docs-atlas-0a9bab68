@@ -1,0 +1,395 @@
+---
+title: Core ML Acceleration
+description: Accelerate Whisper transcription on iOS with Core ML encoder models
+---
+
+Core ML support on iOS (15.0+) and tvOS (15.0+) accelerates the Whisper encoder using Apple's Neural Engine, providing significant performance improvements.
+
+## Overview
+
+**Benefits:**
+- 2-4x faster encoder processing on compatible devices
+- Lower power consumption
+- Utilizes Apple's Neural Engine hardware
+- Automatic fallback to CPU if Core ML fails
+
+**Requirements:**
+- iOS 15.0+ or tvOS 15.0+
+- Core ML model files (`.mlmodelc` directory)
+- GGML model file (still required for decoder)
+
+<Warning>
+  Core ML only accelerates the **encoder**. The decoder still runs using the GGML model.
+</Warning>
+
+## Setup
+
+<Steps>
+
+<Step title="Download Core ML models">
+  Core ML models are available on Hugging Face:
+  
+  [https://huggingface.co/ggerganov/whisper.cpp/tree/main](https://huggingface.co/ggerganov/whisper.cpp/tree/main)
+  
+  **Files are archived (.zip)** - you need to:
+  1. Download the `.zip` file (e.g., `ggml-base-encoder.mlmodelc.zip`)
+  2. Extract to get the `.mlmodelc` directory
+  
+  <Tip>
+    You can use [react-native-zip-archive](https://github.com/mockingbot/react-native-zip-archive) to extract at runtime, or host individual files yourself.
+  </Tip>
+</Step>
+
+<Step title="Understand model structure">
+  A `.mlmodelc` directory contains (3 required files):
+  
+  ```
+  ggml-base-encoder.mlmodelc/
+  ├── model.mil              # Required: Model definition
+  ├── coremldata.bin         # Required: Model metadata
+  └── weights/
+      └── weight.bin         # Required: Model weights
+  ```
+  
+  Optional files:
+  - `metadata.json`
+  - `analytics/coremldata.bin`
+</Step>
+
+<Step title="Place models with GGML model">
+  Core ML models must be co-located with the GGML model:
+  
+  ```
+  /path/to/models/
+  ├── ggml-base.bin                    # GGML model
+  └── ggml-base-encoder.mlmodelc/      # Core ML model (same prefix)
+      ├── model.mil
+      ├── coremldata.bin
+      └── weights/weight.bin
+  ```
+  
+  **Naming convention:**
+  - GGML: `ggml-{model}.bin`
+  - Core ML: `ggml-{model}-encoder.mlmodelc/`
+  
+  For example:
+  - `ggml-tiny.en.bin` → `ggml-tiny.en-encoder.mlmodelc/`
+  - `ggml-base.bin` → `ggml-base-encoder.mlmodelc/`
+</Step>
+
+</Steps>
+
+## Usage Patterns
+
+### Runtime Download (Recommended)
+
+Download and extract Core ML models at runtime to avoid increasing app size:
+
+```typescript
+import { initWhisper } from 'whisper.rn'
+import RNFS from 'react-native-fs'
+import { unzip } from 'react-native-zip-archive'
+
+// Download GGML model
+const modelPath = `${RNFS.DocumentDirectoryPath}/ggml-base.bin`
+await RNFS.downloadFile({
+  fromUrl: 'https://example.com/ggml-base.bin',
+  toFile: modelPath
+}).promise
+
+// Download Core ML model archive
+const coreMLZip = `${RNFS.DocumentDirectoryPath}/ggml-base-encoder.mlmodelc.zip`
+await RNFS.downloadFile({
+  fromUrl: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base-encoder.mlmodelc.zip',
+  toFile: coreMLZip
+}).promise
+
+// Extract Core ML model
+const modelsDir = RNFS.DocumentDirectoryPath
+await unzip(coreMLZip, modelsDir)
+// Now you have: modelsDir/ggml-base-encoder.mlmodelc/
+
+// Initialize with Core ML enabled
+const whisperContext = await initWhisper({
+  filePath: modelPath,
+  useCoreMLIos: true  // Enable Core ML (default: true)
+})
+
+console.log('Core ML enabled:', whisperContext.gpu)
+if (!whisperContext.gpu) {
+  console.log('Reason:', whisperContext.reasonNoGPU)
+}
+```
+
+### Bundled Assets (Dev/Testing)
+
+Bundle Core ML models in your app (increases app size significantly):
+
+<Tabs>
+  <Tab title="Using require()">
+    ```typescript
+    import { initWhisper } from 'whisper.rn'
+    import { Platform } from 'react-native'
+    
+    const whisperContext = await initWhisper({
+      filePath: require('../assets/ggml-base.bin'),
+      coreMLModelAsset: Platform.OS === 'ios' ? {
+        filename: 'ggml-base-encoder.mlmodelc',
+        assets: [
+          require('../assets/ggml-base-encoder.mlmodelc/weights/weight.bin'),
+          require('../assets/ggml-base-encoder.mlmodelc/model.mil'),
+          require('../assets/ggml-base-encoder.mlmodelc/coremldata.bin'),
+        ]
+      } : undefined
+    })
+    ```
+    
+    <Warning>
+      This significantly increases app size. Only use for development or if Core ML models are essential.
+    </Warning>
+  </Tab>
+  
+  <Tab title="Platform-specific files">
+    Split asset imports into platform files to avoid bundling on Android:
+    
+    **context-opts.ios.ts:**
+    ```typescript
+    export default {
+      filePath: require('../assets/ggml-base.bin'),
+      coreMLModelAsset: {
+        filename: 'ggml-base-encoder.mlmodelc',
+        assets: [
+          require('../assets/ggml-base-encoder.mlmodelc/weights/weight.bin'),
+          require('../assets/ggml-base-encoder.mlmodelc/model.mil'),
+          require('../assets/ggml-base-encoder.mlmodelc/coremldata.bin'),
+        ]
+      }
+    }
+    ```
+    
+    **context-opts.android.ts:**
+    ```typescript
+    export default {
+      filePath: require('../assets/ggml-base.bin')
+    }
+    ```
+    
+    **App code:**
+    ```typescript
+    import contextOpts from './context-opts'
+    
+    const whisperContext = await initWhisper(contextOpts)
+    ```
+  </Tab>
+</Tabs>
+
+### Metro Config for Assets
+
+If bundling Core ML models, add `.mil` to Metro's asset extensions:
+
+```javascript
+// metro.config.js
+const defaultAssetExts = require('metro-config/src/defaults/defaults').assetExts
+
+module.exports = {
+  resolver: {
+    assetExts: [
+      ...defaultAssetExts,
+      'bin',  // GGML models
+      'mil',  // Core ML models
+    ]
+  }
+}
+```
+
+<Warning>
+  RN packager has a 2GB file size limit. Large models (e.g., `large` f16 models at 2.9GB) cannot be bundled.
+</Warning>
+
+## Initialization Options
+
+```typescript
+type ContextOptions = {
+  filePath: string | number
+  
+  // Core ML options
+  useCoreMLIos?: boolean              // Enable Core ML (default: true)
+  coreMLModelAsset?: {                // For bundled assets
+    filename: string                  // e.g., 'ggml-base-encoder.mlmodelc'
+    assets: Array<string | number>   // Required files (paths or require())
+  }
+  
+  // GPU options (alternative to Core ML)
+  useGpu?: boolean                    // Use Metal GPU (default: true)
+  useFlashAttn?: boolean              // Flash Attention (for GPU only)
+  
+  // Other options
+  isBundleAsset?: boolean             // Is filePath a bundle asset
+}
+```
+
+**Priority:**
+1. If `useGpu: true` → Tries Metal GPU (Core ML ignored)
+2. If `useCoreMLIos: true` and Core ML model exists → Uses Core ML
+3. Otherwise → Falls back to CPU
+
+## Checking Core ML Status
+
+```typescript
+const whisperContext = await initWhisper({
+  filePath: modelPath,
+  useCoreMLIos: true
+})
+
+if (whisperContext.gpu) {
+  console.log('Core ML is active!')
+} else {
+  console.log('Core ML not active')
+  console.log('Reason:', whisperContext.reasonNoGPU)
+}
+```
+
+**Common `reasonNoGPU` values:**
+- `Core ML model not found`
+- `Core ML disabled in build`
+- `Failed to load Core ML model`
+- `GPU (Metal) takes priority`
+
+## Build Configuration
+
+### Enable/Disable Core ML
+
+Control Core ML compilation in your Podfile:
+
+```ruby
+# Podfile
+ENV['RNWHISPER_DISABLE_COREML'] = '1'  # Disable Core ML compilation
+```
+
+Useful for:
+- Reducing build time during development
+- Building for devices without Core ML support
+
+### Check Core ML Availability
+
+```typescript
+import { isUseCoreML, isCoreMLAllowFallback } from 'whisper.rn'
+
+console.log('Core ML available:', isUseCoreML)
+console.log('Fallback allowed:', isCoreMLAllowFallback)
+```
+
+## Performance Comparison
+
+**Typical speedup (iPhone 13 Pro, `tiny.en` model):**
+
+| Mode | Encode Time | Total Time |
+|------|-------------|------------|
+| CPU | ~800ms | ~1200ms |
+| Core ML | ~200ms | ~600ms |
+
+**Speedup: ~2-3x for encoder, ~2x total**
+
+<Tip>
+  Larger models (base, small, medium) see greater speedups with Core ML.
+</Tip>
+
+## GPU vs Core ML
+
+whisper.rn supports two iOS acceleration methods:
+
+| Feature | Core ML | Metal GPU |
+|---------|---------|----------|
+| Accelerates | Encoder only | Full model |
+| iOS Version | 15.0+ | 11.0+ |
+| Priority | Lower | Higher (if `useGpu: true`) |
+| Model Files | `.mlmodelc` directory | GGML only |
+| Typical Speedup | 2-3x encoder | Varies |
+
+**Recommendation:**
+- Use **Core ML** for best balance of speed and compatibility
+- Use **Metal GPU** if you need full-model acceleration (experimental)
+
+```typescript
+// Prefer Metal GPU over Core ML
+const whisperContext = await initWhisper({
+  filePath: modelPath,
+  useGpu: true,         // Metal GPU (higher priority)
+  useCoreMLIos: true    // Fallback to Core ML if Metal fails
+})
+```
+
+## Troubleshooting
+
+### Core ML not loading
+
+<Steps>
+  <Step title="Check model naming">
+    Ensure Core ML model directory name matches GGML model:
+    - `ggml-base.bin` → `ggml-base-encoder.mlmodelc/`
+    - Names must be in the same directory
+  </Step>
+  
+  <Step title="Verify required files">
+    Core ML directory must contain:
+    - `model.mil`
+    - `coremldata.bin`
+    - `weights/weight.bin`
+  </Step>
+  
+  <Step title="Check file paths">
+    ```typescript
+    import RNFS from 'react-native-fs'
+    
+    const modelDir = RNFS.DocumentDirectoryPath
+    const coreMLPath = `${modelDir}/ggml-base-encoder.mlmodelc`
+    
+    const exists = await RNFS.exists(`${coreMLPath}/model.mil`)
+    console.log('Core ML model.mil exists:', exists)
+    ```
+  </Step>
+  
+  <Step title="Check reasonNoGPU">
+    ```typescript
+    console.log('Reason:', whisperContext.reasonNoGPU)
+    ```
+  </Step>
+</Steps>
+
+### App size too large
+
+Don't bundle Core ML models - download at runtime instead.
+
+### Build errors
+
+```bash
+# Clean build
+cd ios
+rm -rf Pods/ Podfile.lock
+pod install
+```
+
+If Core ML compilation fails, disable it:
+
+```ruby
+# Podfile
+ENV['RNWHISPER_DISABLE_COREML'] = '1'
+```
+
+## Extended Virtual Addressing
+
+For `medium` and `large` models on iOS, enable Extended Virtual Addressing:
+
+1. Open Xcode
+2. Select your target → Signing & Capabilities
+3. Add **Increased Memory Limit** capability
+
+<Tip>
+  This entitlement allows apps to use more than the default memory limit.
+</Tip>
+
+## See Also
+
+- [File Transcription](/features/transcription) - Use Core ML with transcription
+- [Hugging Face Models](https://huggingface.co/ggerganov/whisper.cpp/tree/main) - Download Core ML models
+- [whisper.cpp Core ML Guide](https://github.com/ggerganov/whisper.cpp#core-ml-support) - Upstream documentation

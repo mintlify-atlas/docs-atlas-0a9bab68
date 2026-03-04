@@ -1,0 +1,542 @@
+---
+title: 'Realtime Streaming'
+description: 'Live transcription from microphone with VAD auto-slicing'
+icon: 'microphone'
+---
+
+Realtime transcription enables live speech-to-text from microphone input with automatic audio slicing, VAD-based speech detection, and memory management.
+
+## Overview
+
+The `RealtimeTranscriber` provides:
+- Live microphone capture and transcription
+- Voice Activity Detection (VAD) for speech/silence detection
+- Automatic audio slicing at configurable intervals
+- Memory-efficient circular buffer management
+- Event-based architecture for transcription updates
+- Audio recording to WAV files
+
+## Quick Start
+
+<Steps>
+  <Step title="Initialize Contexts">
+    First, initialize both Whisper and VAD contexts:
+
+    ```typescript
+    import { initWhisper, initWhisperVad } from 'whisper.rn';
+
+    // Initialize Whisper context
+    const whisperContext = await initWhisper({
+      filePath: require('../assets/ggml-base.bin'),
+    });
+
+    // Initialize VAD context
+    const vadContext = await initWhisperVad({
+      filePath: require('../assets/ggml-silero-v6.2.0.bin'),
+      useGpu: true,
+      nThreads: 4,
+    });
+
+    console.log('Contexts initialized');
+    ```
+  </Step>
+
+  <Step title="Create RealtimeTranscriber">
+    Set up the transcriber with dependencies, options, and callbacks:
+
+    ```typescript
+    import RNFS from 'react-native-fs';
+    import {
+      RealtimeTranscriber,
+      RingBufferVad,
+      VAD_PRESETS,
+      AudioPcmStreamAdapter,
+    } from 'whisper.rn/realtime-transcription';
+
+    // Create VAD wrapper with preset
+    const vadWrapper = new RingBufferVad(vadContext, {
+      vadOptions: VAD_PRESETS.default,
+      vadPreset: 'default',
+      logger: (msg) => console.log(msg),
+    });
+
+    // Create audio stream adapter
+    const audioStream = new AudioPcmStreamAdapter();
+
+    // Create transcriber
+    const transcriber = new RealtimeTranscriber(
+      // Dependencies
+      {
+        whisperContext,
+        vadContext: vadWrapper,
+        audioStream,
+        fs: RNFS,
+      },
+      // Options
+      {
+        logger: (msg) => console.log(msg),
+        audioSliceSec: 30,
+        audioMinSec: 0.5,
+        maxSlicesInMemory: 3,
+        transcribeOptions: {
+          language: 'en',
+          maxLen: 1,
+        },
+        audioOutputPath: `${RNFS.DocumentDirectoryPath}/recording.wav`,
+      },
+      // Callbacks
+      {
+        onTranscribe: (event) => {
+          console.log('Transcription:', event.data?.result);
+        },
+        onVad: (event) => {
+          console.log('VAD:', event.type, event.confidence);
+        },
+        onError: (error) => {
+          console.error('Error:', error);
+        },
+        onStatusChange: (isActive) => {
+          console.log('Status:', isActive ? 'ACTIVE' : 'INACTIVE');
+        },
+        onStatsUpdate: (stats) => {
+          console.log('Stats:', stats.data);
+        },
+      }
+    );
+    ```
+  </Step>
+
+  <Step title="Start Transcription">
+    Start realtime transcription:
+
+    ```typescript
+    await transcriber.start();
+    console.log('Realtime transcription started');
+    ```
+  </Step>
+
+  <Step title="Stop and Cleanup">
+    Stop transcription and release resources:
+
+    ```typescript
+    await transcriber.stop();
+    await transcriber.release();
+    
+    // Release contexts
+    await whisperContext.release();
+    await vadContext.release();
+    ```
+  </Step>
+</Steps>
+
+## VAD Presets
+
+The library includes pre-configured VAD presets for different use cases:
+
+<Tabs>
+  <Tab title="default">
+    Balanced settings for general use:
+    ```typescript
+    VAD_PRESETS.default = {
+      threshold: 0.5,
+      minSpeechDurationMs: 250,
+      minSilenceDurationMs: 100,
+      maxSpeechDurationS: 30,
+      speechPadMs: 30,
+      samplesOverlap: 0.1,
+    }
+    ```
+  </Tab>
+  
+  <Tab title="sensitive">
+    More sensitive, captures quiet speech:
+    ```typescript
+    VAD_PRESETS.sensitive = {
+      threshold: 0.3,
+      minSpeechDurationMs: 100,
+      minSilenceDurationMs: 50,
+      maxSpeechDurationS: 15,
+      speechPadMs: 50,
+      samplesOverlap: 0.2,
+    }
+    ```
+  </Tab>
+  
+  <Tab title="very_sensitive">
+    Maximum sensitivity:
+    ```typescript
+    VAD_PRESETS.very_sensitive = {
+      threshold: 0.2,
+      minSpeechDurationMs: 50,
+      minSilenceDurationMs: 30,
+      maxSpeechDurationS: 10,
+      speechPadMs: 100,
+      samplesOverlap: 0.3,
+    }
+    ```
+  </Tab>
+  
+  <Tab title="conservative">
+    Reduces false positives:
+    ```typescript
+    VAD_PRESETS.conservative = {
+      threshold: 0.7,
+      minSpeechDurationMs: 500,
+      minSilenceDurationMs: 200,
+      maxSpeechDurationS: 60,
+      speechPadMs: 10,
+      samplesOverlap: 0.05,
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Event Callbacks
+
+The transcriber provides several event callbacks:
+
+### onTranscribe
+
+Receives transcription results:
+
+```typescript
+onTranscribe: (event: RealtimeTranscribeEvent) => {
+  const { data, sliceIndex, processTime } = event;
+  
+  if (data?.result) {
+    console.log(`Slice ${sliceIndex}: ${data.result}`);
+    console.log(`Processed in ${processTime}ms`);
+    
+    // Access all segments
+    data.segments.forEach((segment) => {
+      console.log(`[${segment.t0} --> ${segment.t1}] ${segment.text}`);
+    });
+  }
+}
+```
+
+### onVad
+
+Receives VAD events (speech start, speech end, silence):
+
+```typescript
+onVad: (event: RealtimeVadEvent) => {
+  console.log(`VAD: ${event.type} (confidence: ${event.confidence.toFixed(2)})`);
+  
+  if (event.type === 'speech_start') {
+    console.log('Speech detected!');
+  } else if (event.type === 'speech_end') {
+    console.log('Speech ended, triggering slice...');
+  }
+}
+```
+
+### onSliceTranscriptionStabilized
+
+Receives the most recent stabilized transcription:
+
+```typescript
+onSliceTranscriptionStabilized: (text: string) => {
+  console.log('Stabilized text:', text);
+  // Update UI with current transcription
+  setCurrentTranscription(text);
+}
+```
+
+### onStatsUpdate
+
+Receives statistics about memory usage and processing:
+
+```typescript
+onStatsUpdate: (stats: RealtimeStatsEvent) => {
+  const { data } = stats;
+  console.log('Slices in memory:', data.sliceStats?.memoryUsage?.slicesInMemory);
+  console.log('Memory usage:', data.sliceStats?.memoryUsage?.estimatedMB, 'MB');
+  console.log('Is transcribing:', data.isTranscribing);
+}
+```
+
+## Complete Example
+
+Here's a complete React Native component with realtime transcription:
+
+```typescript Complete Realtime Example
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { View, Text, Button, ScrollView, Switch } from 'react-native';
+import RNFS from 'react-native-fs';
+import { initWhisper, initWhisperVad } from 'whisper.rn';
+import type { WhisperContext, WhisperVadContext } from 'whisper.rn';
+import {
+  RealtimeTranscriber,
+  RingBufferVad,
+  VAD_PRESETS,
+  AudioPcmStreamAdapter,
+  type RealtimeTranscribeEvent,
+  type RealtimeVadEvent,
+} from 'whisper.rn/realtime-transcription';
+
+export default function RealtimeTranscription() {
+  const whisperContextRef = useRef<WhisperContext | null>(null);
+  const vadContextRef = useRef<WhisperVadContext | null>(null);
+  const transcriberRef = useRef<RealtimeTranscriber | null>(null);
+
+  const [logs, setLogs] = useState<string[]>([]);
+  const [currentText, setCurrentText] = useState<string>('');
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [vadPreset, setVadPreset] = useState<keyof typeof VAD_PRESETS>('default');
+
+  const log = useCallback((...messages: any[]) => {
+    const timestamp = new Date().toLocaleTimeString();
+    setLogs((prev) => [...prev, `${timestamp}: ${messages.join(' ')}`]);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      whisperContextRef.current?.release();
+      vadContextRef.current?.release();
+      transcriberRef.current?.release();
+    };
+  }, []);
+
+  const initialize = async () => {
+    try {
+      log('Initializing contexts...');
+      
+      // Initialize Whisper
+      const whisperCtx = await initWhisper({
+        filePath: require('../assets/ggml-base.bin'),
+      });
+      whisperContextRef.current = whisperCtx;
+      log('Whisper initialized');
+
+      // Initialize VAD
+      const vadCtx = await initWhisperVad({
+        filePath: require('../assets/ggml-silero-v6.2.0.bin'),
+        useGpu: true,
+        nThreads: 4,
+      });
+      vadContextRef.current = vadCtx;
+      log('VAD initialized');
+    } catch (error) {
+      log('Error initializing:', error);
+    }
+  };
+
+  const startTranscription = async () => {
+    if (!whisperContextRef.current || !vadContextRef.current) {
+      log('Contexts not initialized');
+      return;
+    }
+
+    try {
+      const audioStream = new AudioPcmStreamAdapter();
+      
+      const vadWrapper = new RingBufferVad(vadContextRef.current, {
+        vadOptions: VAD_PRESETS[vadPreset],
+        vadPreset,
+        logger: (msg) => console.log(msg),
+      });
+
+      const transcriber = new RealtimeTranscriber(
+        {
+          whisperContext: whisperContextRef.current,
+          vadContext: vadWrapper,
+          audioStream,
+          fs: RNFS,
+        },
+        {
+          logger: (msg) => log(msg),
+          audioSliceSec: 30,
+          audioMinSec: 0.5,
+          maxSlicesInMemory: 3,
+          transcribeOptions: {
+            language: 'en',
+            maxLen: 1,
+          },
+          audioOutputPath: `${RNFS.DocumentDirectoryPath}/realtime.wav`,
+        },
+        {
+          onTranscribe: (event: RealtimeTranscribeEvent) => {
+            if (event.data?.result) {
+              log(`Transcribed: "${event.data.result.substring(0, 50)}..."`);
+            }
+          },
+          onVad: (event: RealtimeVadEvent) => {
+            if (event.type !== 'silence') {
+              log(`VAD: ${event.type}`);
+            }
+          },
+          onError: (error) => log('Error:', error),
+          onStatusChange: (isActive) => setIsTranscribing(isActive),
+          onSliceTranscriptionStabilized: (text) => setCurrentText(text),
+        }
+      );
+
+      transcriberRef.current = transcriber;
+      await transcriber.start();
+      log('Realtime transcription started');
+    } catch (error) {
+      log('Error starting transcription:', error);
+    }
+  };
+
+  const stopTranscription = async () => {
+    if (!transcriberRef.current) return;
+
+    try {
+      await transcriberRef.current.stop();
+      log('Transcription stopped');
+    } catch (error) {
+      log('Error stopping:', error);
+    }
+  };
+
+  return (
+    <ScrollView style={{ padding: 20 }}>
+      <Button title="Initialize" onPress={initialize} />
+      
+      <View style={{ marginTop: 10 }}>
+        <Text>VAD Preset: {vadPreset}</Text>
+        <Button
+          title="Change VAD Preset"
+          onPress={() => {
+            const presets = Object.keys(VAD_PRESETS) as Array<keyof typeof VAD_PRESETS>;
+            const currentIndex = presets.indexOf(vadPreset);
+            const nextPreset = presets[(currentIndex + 1) % presets.length];
+            setVadPreset(nextPreset);
+            log(`Changed VAD preset to: ${nextPreset}`);
+          }}
+        />
+      </View>
+
+      <View style={{ marginTop: 10 }}>
+        <Button
+          title={isTranscribing ? 'Stop' : 'Start Realtime'}
+          onPress={isTranscribing ? stopTranscription : startTranscription}
+          disabled={!whisperContextRef.current}
+        />
+      </View>
+
+      {currentText && (
+        <View style={{ marginTop: 20, padding: 10, backgroundColor: '#e8f5e8' }}>
+          <Text style={{ fontWeight: 'bold' }}>Current Transcription:</Text>
+          <Text>{currentText}</Text>
+        </View>
+      )}
+
+      <View style={{ marginTop: 20 }}>
+        <Text style={{ fontWeight: 'bold' }}>Logs:</Text>
+        {logs.slice(-10).map((log, i) => (
+          <Text key={i} style={{ fontSize: 12 }}>{log}</Text>
+        ))}
+      </View>
+    </ScrollView>
+  );
+}
+```
+
+## File Simulation Mode
+
+Test realtime transcription using pre-recorded audio files:
+
+```typescript
+import { SimulateFileAudioStreamAdapter } from 'whisper.rn/realtime-transcription/adapters';
+
+const audioStream = new SimulateFileAudioStreamAdapter({
+  fs: RNFS,
+  filePath: '/path/to/audio.wav',
+  playbackSpeed: 1.0, // 1x speed, can go faster for testing
+  chunkDurationMs: 100,
+  loop: false,
+  onEndOfFile: () => {
+    console.log('File playback complete');
+  },
+  logger: (msg) => console.log(msg),
+});
+
+// Use with RealtimeTranscriber
+const transcriber = new RealtimeTranscriber(
+  {
+    whisperContext,
+    vadContext: vadWrapper,
+    audioStream, // File simulation adapter
+    fs: RNFS,
+  },
+  { /* options */ },
+  { /* callbacks */ }
+);
+```
+
+## Advanced Features
+
+### Force Next Slice
+
+Manually trigger a slice during transcription:
+
+```typescript
+await transcriber.nextSlice();
+console.log('Forced next slice');
+```
+
+### Update VAD Options
+
+Change VAD settings during transcription:
+
+```typescript
+transcriber.updateVadOptions(VAD_PRESETS.sensitive);
+```
+
+### Reset Transcriber
+
+Clear all state without stopping:
+
+```typescript
+transcriber.reset();
+console.log('Transcriber reset');
+```
+
+### Get Transcription Results
+
+Retrieve all transcription results:
+
+```typescript
+const results = transcriber.getTranscriptionResults();
+results.forEach(({ slice, transcribeEvent }) => {
+  console.log(`Slice ${slice.index}: ${transcribeEvent.data?.result}`);
+});
+```
+
+## Performance Tips
+
+<Tip>
+  **Slice Duration**: 30 seconds is optimal for most cases. Shorter slices = more frequent processing, longer slices = higher memory usage.
+</Tip>
+
+<Tip>
+  **Memory Management**: Set `maxSlicesInMemory: 3` to keep memory usage low. Older slices are automatically discarded.
+</Tip>
+
+<Tip>
+  **VAD Preset**: Start with 'default', switch to 'sensitive' for quiet environments or 'conservative' for noisy environments.
+</Tip>
+
+<Tip>
+  **Model Selection**: Use 'tiny' or 'base' models for realtime. Larger models may cause lag on lower-end devices.
+</Tip>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Basic Transcription" icon="file-audio" href="/examples/basic-transcription">
+    Learn basic audio file transcription
+  </Card>
+  <Card title="VAD Detection" icon="waveform-lines" href="/examples/vad-detection">
+    Understand Voice Activity Detection
+  </Card>
+  <Card title="File Handling" icon="file" href="/examples/file-handling">
+    Work with different audio formats
+  </Card>
+  <Card title="API Reference" icon="code" href="/api-reference/realtime-transcriber">
+    Full RealtimeTranscriber API documentation
+  </Card>
+</CardGroup>

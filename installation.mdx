@@ -1,0 +1,349 @@
+---
+title: Installation
+description: Install whisper.rn in your React Native application
+---
+
+## Install the Package
+
+Install whisper.rn using your preferred package manager:
+
+<CodeGroup>
+
+```bash npm
+npm install whisper.rn
+```
+
+```bash yarn
+yarn add whisper.rn
+```
+
+```bash pnpm
+pnpm add whisper.rn
+```
+
+</CodeGroup>
+
+<Note>
+  **Current version:** `0.6.0-rc.0`
+
+  **Requirements:**
+  - React Native 0.60+
+  - Node.js 18+
+  - iOS 11.0+ / tvOS 11.0+
+  - Android API 21+ (Android 5.0)
+</Note>
+
+## Platform-Specific Setup
+
+<Tabs>
+  <Tab title="iOS">
+    <Steps>
+      <Step title="Install CocoaPods dependencies">
+        ```bash
+        npx pod-install
+        ```
+
+        By default, whisper.rn uses a pre-built `rnwhisper.xcframework` for faster builds.
+      </Step>
+
+      <Step title="(Optional) Build from source">
+        If you need to customize the native build, add this to your `Podfile`:
+
+        ```ruby
+        # Force build whisper.rn from source
+        ENV['RNWHISPER_BUILD_FROM_SOURCE'] = '1'
+        ```
+
+        Then reinstall pods:
+        ```bash
+        cd ios && pod install
+        ```
+      </Step>
+
+      <Step title="(Optional) Add microphone permissions">
+        If you plan to use realtime transcription, add microphone permission to `ios/YourApp/Info.plist`:
+
+        ```xml
+        <key>NSMicrophoneUsageDescription</key>
+        <string>This app requires microphone access to transcribe speech</string>
+        ```
+
+        <Warning>
+          tvOS does not support microphone access.
+        </Warning>
+      </Step>
+
+      <Step title="(Optional) Enable Extended Virtual Addressing">
+        For `medium` or `large` models, enable Extended Virtual Addressing in Xcode:
+
+        1. Select your app target in Xcode
+        2. Go to **Signing & Capabilities**
+        3. Click **+ Capability**
+        4. Add **Extended Virtual Addressing**
+
+        This allows your app to use more memory for large models.
+      </Step>
+    </Steps>
+
+    ### iOS Build Options
+
+    You can customize the iOS build with environment variables in your `Podfile`:
+
+    ```ruby
+    # Disable Core ML support
+    ENV['RNWHISPER_DISABLE_COREML'] = '1'
+
+    # Disable Metal GPU acceleration
+    ENV['RNWHISPER_DISABLE_METAL'] = '1'
+    ```
+  </Tab>
+
+  <Tab title="Android">
+    <Steps>
+      <Step title="Update NDK version (recommended)">
+        For Apple Silicon Macs, use NDK version 24.0.8215888 or higher.
+
+        Add to `android/build.gradle`:
+
+        ```gradle
+        buildscript {
+            ext {
+                // ... other configs
+                ndkVersion = "24.0.8215888"
+            }
+        }
+        ```
+      </Step>
+
+      <Step title="Add ProGuard rules">
+        If ProGuard is enabled, add this to `android/app/proguard-rules.pro`:
+
+        ```proguard
+        # whisper.rn
+        -keep class com.rnwhisper.** { *; }
+        ```
+      </Step>
+
+      <Step title="(Optional) Add microphone permissions">
+        If you plan to use realtime transcription, add to `android/app/src/main/AndroidManifest.xml`:
+
+        ```xml
+        <uses-permission android:name="android.permission.RECORD_AUDIO" />
+        ```
+
+        And request permission at runtime:
+
+        ```typescript
+        import { PermissionsAndroid, Platform } from 'react-native';
+
+        if (Platform.OS === 'android') {
+          await PermissionsAndroid.request(
+            PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
+            {
+              title: 'Microphone Permission',
+              message: 'This app needs microphone access for transcription',
+              buttonNeutral: 'Ask Me Later',
+              buttonNegative: 'Cancel',
+              buttonPositive: 'OK',
+            }
+          );
+        }
+        ```
+      </Step>
+    </Steps>
+
+    <Tip>
+      See [Troubleshooting](/troubleshooting) if you encounter Android build issues.
+    </Tip>
+  </Tab>
+
+  <Tab title="Expo">
+    <Warning>
+      Expo Go is **not supported**. You must use a development build or prebuild.
+    </Warning>
+
+    <Steps>
+      <Step title="Install the package">
+        ```bash
+        npx expo install whisper.rn
+        ```
+      </Step>
+
+      <Step title="Prebuild the native project">
+        ```bash
+        npx expo prebuild
+        ```
+
+        This generates the iOS and Android native projects.
+      </Step>
+
+      <Step title="Add permissions to app.json (optional)">
+        For microphone access:
+
+        ```json
+        {
+          "expo": {
+            "plugins": [
+              [
+                "expo-build-properties",
+                {
+                  "ios": {
+                    "infoPlist": {
+                      "NSMicrophoneUsageDescription": "This app needs microphone access to transcribe speech"
+                    }
+                  },
+                  "android": {
+                    "permissions": ["android.permission.RECORD_AUDIO"]
+                  }
+                }
+              ]
+            ]
+          }
+        }
+        ```
+      </Step>
+
+      <Step title="Run development build">
+        ```bash
+        npx expo run:ios
+        # or
+        npx expo run:android
+        ```
+      </Step>
+    </Steps>
+  </Tab>
+</Tabs>
+
+## Download a Whisper Model
+
+whisper.rn requires a GGML-format Whisper model file. Models are available from the [whisper.cpp repository](https://huggingface.co/ggerganov/whisper.cpp).
+
+<Steps>
+  <Step title="Choose a model size">
+    <ResponseField name="Model Sizes" type="comparison">
+      | Model | Size | Speed | Accuracy | Use Case |
+      |-------|------|-------|----------|----------|
+      | `tiny.en` | 75 MB | Fastest | Good | Quick transcription, English only |
+      | `base.en` | 148 MB | Fast | Better | General use, English only |
+      | `small.en` | 488 MB | Medium | Great | High accuracy, English only |
+      | `medium.en` | 1.5 GB | Slow | Excellent | Best quality, English only |
+      | `tiny` | 75 MB | Fastest | Good | Multilingual, 99 languages |
+      | `base` | 142 MB | Fast | Better | Multilingual |
+      | `small` | 466 MB | Medium | Great | Multilingual |
+    </ResponseField>
+
+    <Tip>
+      For most mobile apps, `tiny.en` or `base.en` offers the best balance of speed and accuracy.
+    </Tip>
+  </Step>
+
+  <Step title="Download the model">
+    Download from Hugging Face:
+
+    <CodeGroup>
+      ```bash tiny.en
+      curl -L https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin -o ggml-tiny.en.bin
+      ```
+
+      ```bash base.en
+      curl -L https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin -o ggml-base.en.bin
+      ```
+
+      ```bash small.en
+      curl -L https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin -o ggml-small.en.bin
+      ```
+    </CodeGroup>
+  </Step>
+
+  <Step title="Place model in your app">
+    You have two options:
+
+    **Option 1: Bundle with app (development)**
+
+    Place the `.bin` file in your project (e.g., `assets/ggml-tiny.en.bin`) and use `require()`:
+
+    ```typescript
+    const modelPath = require('./assets/ggml-tiny.en.bin');
+    ```
+
+    <Warning>
+      This increases app size significantly. Models are typically 75MB to 2.9GB.
+    </Warning>
+
+    **Option 2: Download at runtime (recommended for production)**
+
+    Download the model file when the app first launches and save it to the device:
+
+    ```typescript
+    import RNFS from 'react-native-fs';
+
+    const modelUrl = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin';
+    const modelPath = `${RNFS.DocumentDirectoryPath}/ggml-tiny.en.bin`;
+
+    // Check if already downloaded
+    const exists = await RNFS.exists(modelPath);
+    if (!exists) {
+      await RNFS.downloadFile({
+        fromUrl: modelUrl,
+        toFile: modelPath,
+      }).promise;
+    }
+    ```
+  </Step>
+</Steps>
+
+### Using Bundled Assets (Optional)
+
+To bundle models as assets, update `metro.config.js`:
+
+```javascript metro.config.js
+const { getDefaultConfig } = require('metro-config');
+const defaultAssetExts = require('metro-config/src/defaults/defaults').assetExts;
+
+module.exports = {
+  resolver: {
+    assetExts: [
+      ...defaultAssetExts,
+      'bin', // whisper.rn: GGML model files
+      'mil', // whisper.rn: Core ML model files
+    ],
+  },
+};
+```
+
+<Note>
+  The React Native packager has a 2GB file size limit, so original f16 `large` models (2.9GB) cannot be bundled. Use quantized versions instead.
+</Note>
+
+## Verify Installation
+
+Test your installation:
+
+```typescript
+import { libVersion } from 'whisper.rn';
+
+console.log('whisper.cpp version:', libVersion);
+```
+
+<Check>
+  Installation complete! Continue to [Quick Start](/quickstart) to transcribe your first audio.
+</Check>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card
+    title="Quick Start Guide"
+    icon="bolt"
+    href="/quickstart"
+  >
+    Transcribe your first audio file
+  </Card>
+  <Card
+    title="Core ML Setup"
+    icon="apple"
+    href="/guides/coreml-setup"
+  >
+    Enable iOS encoder acceleration
+  </Card>
+</CardGroup>

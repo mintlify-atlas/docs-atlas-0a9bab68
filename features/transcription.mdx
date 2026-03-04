@@ -1,0 +1,330 @@
+---
+title: File & Data Transcription
+description: Transcribe audio from files, base64 WAV data, or raw PCM using the Whisper context
+---
+
+whisper.rn provides two primary methods for transcribing audio: `transcribe()` for file-based transcription and `transcribeData()` for raw audio data.
+
+## Method Signatures
+
+### transcribe()
+
+Transcribe audio from a file path, base64-encoded WAV, or bundled asset.
+
+```typescript
+whisperContext.transcribe(
+  filePathOrBase64: string | number,
+  options?: TranscribeFileOptions
+): {
+  stop: () => Promise<void>
+  promise: Promise<TranscribeResult>
+}
+```
+
+**Parameters:**
+- `filePathOrBase64`: File path, asset ID (`require()`), or base64 WAV with `data:audio/wav;base64,` prefix
+- `options`: Transcription options including callbacks
+
+### transcribeData()
+
+Transcribe from base64-encoded PCM or ArrayBuffer (16-bit PCM, mono, 16kHz).
+
+```typescript
+whisperContext.transcribeData(
+  data: string | ArrayBuffer,
+  options?: TranscribeFileOptions
+): {
+  stop: () => Promise<void>
+  promise: Promise<TranscribeResult>
+}
+```
+
+**Parameters:**
+- `data`: Base64-encoded float32 PCM string **or** ArrayBuffer (uses JSI for efficiency)
+- `options`: Same as `transcribe()`
+
+<Warning>
+  When passing ArrayBuffer, JSI bindings must be installed (happens automatically via `initWhisper()`).
+</Warning>
+
+## Basic Usage
+
+<CodeGroup>
+
+```typescript File Path
+import { initWhisper } from 'whisper.rn'
+
+const whisperContext = await initWhisper({
+  filePath: 'file:///path/to/ggml-base.bin'
+})
+
+const { stop, promise } = whisperContext.transcribe(
+  'file:///path/to/audio.wav',
+  { language: 'en' }
+)
+
+const { result, segments } = await promise
+console.log('Transcription:', result)
+```
+
+```typescript Bundled Asset
+import { initWhisper } from 'whisper.rn'
+
+// Initialize with bundled model
+const whisperContext = await initWhisper({
+  filePath: require('../assets/ggml-base.bin')
+})
+
+// Transcribe bundled audio
+const { promise } = whisperContext.transcribe(
+  require('../assets/sample.wav'),
+  { language: 'en' }
+)
+
+const { result } = await promise
+```
+
+```typescript Base64 WAV
+const base64Audio = 'data:audio/wav;base64,UklGRi4AAABXQVZFZm10...'
+
+const { promise } = whisperContext.transcribe(
+  base64Audio,
+  { language: 'en' }
+)
+
+const { result } = await promise
+```
+
+```typescript ArrayBuffer (JSI)
+// ArrayBuffer uses high-performance JSI bindings
+const audioBuffer: ArrayBuffer = // ... 16-bit PCM, mono, 16kHz
+
+const { promise } = whisperContext.transcribeData(
+  audioBuffer,
+  { language: 'en' }
+)
+
+const { result } = await promise
+```
+
+</CodeGroup>
+
+## Transcription Options
+
+```typescript
+type TranscribeFileOptions = {
+  // Language & Translation
+  language?: string           // Default: 'auto' (auto-detect)
+  translate?: boolean         // Translate to English (default: false)
+  
+  // Performance
+  maxThreads?: number         // Default: 2 for 4-core, 4 for 8+ cores
+  nProcessors?: number        // Parallel processing (default: 1)
+  
+  // Context & Prompting
+  maxContext?: number         // Max context tokens
+  prompt?: string             // Initial prompt to guide transcription
+  
+  // Timestamps & Segmentation
+  tokenTimestamps?: boolean   // Enable token-level timestamps
+  wordThold?: number          // Word timestamp probability threshold
+  offset?: number             // Time offset in ms
+  duration?: number           // Process duration in ms
+  
+  // Quality Settings
+  temperature?: number        // Decoding temperature (default: 0.0)
+  temperatureInc?: number     // Temperature increment on failure
+  beamSize?: number           // Beam search size
+  bestOf?: number             // Number of best candidates
+  
+  // Advanced
+  maxLen?: number             // Max segment length in characters
+  tdrzEnable?: boolean        // Enable tinydiarize (requires tdrz model)
+  
+  // Callbacks
+  onProgress?: (progress: number) => void
+  onNewSegments?: (result: TranscribeNewSegmentsResult) => void
+}
+```
+
+## Progress & New Segments
+
+<Steps>
+
+<Step title="Track progress">
+  Use `onProgress` to receive updates from 0-100%:
+
+  ```typescript
+  const { promise } = whisperContext.transcribe(
+    audioPath,
+    {
+      language: 'en',
+      onProgress: (progress) => {
+        console.log(`Progress: ${progress}%`)
+        // Update UI progress bar
+      }
+    }
+  )
+  ```
+</Step>
+
+<Step title="Stream segments as they're decoded">
+  Use `onNewSegments` to get results incrementally:
+
+  ```typescript
+  const { promise } = whisperContext.transcribe(
+    audioPath,
+    {
+      language: 'en',
+      onNewSegments: ({ nNew, totalNNew, result, segments }) => {
+        console.log(`New segments: ${nNew}, Total: ${totalNNew}`)
+        console.log(`Current result: ${result}`)
+        // segments contains the new segments with timestamps
+      }
+    }
+  )
+  ```
+</Step>
+
+<Step title="Stop transcription">
+  Call `stop()` to abort ongoing transcription:
+
+  ```typescript
+  const { stop, promise } = whisperContext.transcribe(audioPath, options)
+  
+  // Later, to cancel:
+  await stop()
+  
+  const result = await promise
+  console.log('Aborted:', result.isAborted) // true
+  ```
+</Step>
+
+</Steps>
+
+## Transcription Result
+
+```typescript
+type TranscribeResult = {
+  result: string              // Full transcription text
+  language: string            // Detected/specified language code
+  segments: Array<{
+    text: string              // Segment text
+    t0: number                // Start time in ms
+    t1: number                // End time in ms
+  }>
+  isAborted: boolean          // True if stopped via stop()
+}
+```
+
+**Example result:**
+
+```typescript
+{
+  result: "And so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.",
+  language: "en",
+  segments: [
+    { text: "And so my fellow Americans,", t0: 0, t1: 2000 },
+    { text: "ask not what your country can do for you,", t0: 2000, t1: 5000 },
+    { text: "ask what you can do for your country.", t0: 5000, t1: 8000 }
+  ],
+  isAborted: false
+}
+```
+
+## Audio Format Requirements
+
+<Tip>
+  Whisper requires audio in a specific format. Ensure your audio meets these requirements:
+</Tip>
+
+| Property | Requirement |
+|----------|-------------|
+| Sample Rate | 16kHz |
+| Channels | Mono (1 channel) |
+| Bit Depth | 16-bit PCM |
+| Format | WAV file or raw PCM data |
+
+**For ArrayBuffer:**
+- Use `transcribeData()` with raw 16-bit PCM samples
+- Data must be mono, 16kHz
+- JSI binding provides zero-copy transfer for best performance
+
+## Common Patterns
+
+### Auto-detect Language
+
+```typescript
+const { promise } = whisperContext.transcribe(audioPath, {
+  language: 'auto' // or omit the language option
+})
+
+const { result, language } = await promise
+console.log(`Detected language: ${language}`)
+```
+
+### Translate to English
+
+```typescript
+const { promise } = whisperContext.transcribe(audioPath, {
+  language: 'es',  // Spanish audio
+  translate: true  // Translate to English
+})
+
+const { result } = await promise // English translation
+```
+
+### Use Initial Prompt
+
+<Tip>
+  Prompts help guide the model's vocabulary and style. They don't need to match the audio content.
+</Tip>
+
+```typescript
+const { promise } = whisperContext.transcribe(audioPath, {
+  language: 'en',
+  prompt: 'Medical terminology: diagnosis, treatment, prescription'
+})
+```
+
+### Process Audio Segment
+
+```typescript
+const { promise } = whisperContext.transcribe(audioPath, {
+  language: 'en',
+  offset: 5000,      // Start at 5 seconds
+  duration: 10000    // Process 10 seconds
+})
+```
+
+## Performance Tips
+
+1. **Use ArrayBuffer for in-memory audio** - JSI bindings avoid serialization overhead
+2. **Adjust thread count** - Default is optimal for most devices, but you can tune it
+3. **Enable GPU/Core ML** - Set `useGpu: true` or `useCoreMLIos: true` in `initWhisper()`
+4. **Choose appropriate model size** - Smaller models (tiny, base) are faster but less accurate
+5. **Use quantized models** - q8 or q5 models reduce memory and improve speed
+
+## Error Handling
+
+```typescript
+try {
+  const { promise } = whisperContext.transcribe(audioPath, options)
+  const result = await promise
+  
+  if (result.isAborted) {
+    console.log('Transcription was cancelled')
+  } else {
+    console.log('Success:', result.result)
+  }
+} catch (error) {
+  console.error('Transcription failed:', error)
+  // Handle errors (invalid file, unsupported format, etc.)
+}
+```
+
+## See Also
+
+- [Realtime Transcription](/features/realtime-transcription) - Live microphone transcription
+- [Voice Activity Detection](/features/voice-activity-detection) - Detect speech segments
+- [Core ML Acceleration](/features/coreml-acceleration) - iOS GPU acceleration

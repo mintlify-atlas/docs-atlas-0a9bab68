@@ -1,0 +1,109 @@
+---
+title: initWhisperVad
+description: Initialize a Voice Activity Detection (VAD) context for speech detection
+---
+
+Initialize a VAD context for voice activity detection using the Silero VAD model.
+
+## Signature
+
+```typescript
+function initWhisperVad(
+  options: VadContextOptions
+): Promise<WhisperVadContext>
+```
+
+## Parameters
+
+<ParamField path="options" type="VadContextOptions" required>
+  Configuration options for the VAD context
+  
+  <Expandable title="VadContextOptions properties">
+    <ParamField path="filePath" type="string | number" required>
+      Path to the Silero VAD model file (`.bin` format), or a `require()` asset number.
+      
+      - File path: `'/path/to/silero_vad.bin'`
+      - Asset: `require('./assets/silero_vad.bin')`
+      - Bundle asset: Set `isBundleAsset: true` for assets in the app bundle
+    </ParamField>
+    
+    <ParamField path="isBundleAsset" type="boolean" default="false">
+      Whether the file path points to a bundle asset (for string file paths only).
+    </ParamField>
+    
+    <ParamField path="useGpu" type="boolean" default="true">
+      Enable GPU/Metal acceleration if available (iOS only).
+    </ParamField>
+    
+    <ParamField path="nThreads" type="number">
+      Number of threads to use during computation.
+      
+      Default: 2 for 4-core devices, 4 for devices with more cores.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+## Returns
+
+<ResponseField name="WhisperVadContext" type="Promise<WhisperVadContext>">
+  A promise that resolves to a [WhisperVadContext](/api-reference/whisper-vad-context) instance.
+  
+  <Expandable title="WhisperVadContext properties">
+    <ResponseField name="id" type="number">
+      Unique context identifier
+    </ResponseField>
+    
+    <ResponseField name="gpu" type="boolean">
+      Whether GPU/Metal acceleration is active
+    </ResponseField>
+    
+    <ResponseField name="reasonNoGPU" type="string">
+      Explanation if GPU is not available (empty string if GPU is active)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+## Example
+
+```typescript
+import { initWhisperVad } from 'whisper.rn'
+
+// Initialize with a local file
+const vadContext = await initWhisperVad({
+  filePath: '/path/to/silero_vad.bin',
+})
+
+console.log('GPU enabled:', vadContext.gpu)
+
+// Initialize with a bundled asset
+const vadContext = await initWhisperVad({
+  filePath: require('./assets/silero_vad.bin'),
+})
+
+// Initialize with custom settings
+const vadContext = await initWhisperVad({
+  filePath: '/path/to/silero_vad.bin',
+  useGpu: true,
+  nThreads: 4,
+})
+
+// Use the context for speech detection
+const segments = await vadContext.detectSpeech('/path/to/audio.wav')
+
+// Release the context when done
+await vadContext.release()
+```
+
+## Notes
+
+- The VAD model file (Silero VAD) is separate from the Whisper model
+- Download the Silero VAD model from the whisper.cpp repository or use a pre-converted `.bin` file
+- GPU acceleration is currently only available on iOS devices with Metal support
+- Always call `context.release()` when finished to free memory
+- Use `releaseAllWhisperVad()` to release all VAD contexts at once
+
+## Related
+
+- [WhisperVadContext](/api-reference/whisper-vad-context) - Methods for detecting speech
+- [VadOptions](/api-reference/vad-options) - Options for speech detection
+- [releaseAllWhisperVad](/api-reference/release-functions) - Release all VAD contexts

@@ -1,0 +1,422 @@
+---
+title: 'RealtimeTranscriber'
+description: 'Real-time audio transcription with VAD support'
+---
+
+## Overview
+
+RealtimeTranscriber provides real-time audio transcription with Voice Activity Detection (VAD) support. It automatically manages audio slices, detects speech segments, and processes transcriptions in a queue-based system.
+
+**Key Features:**
+- Automatic slice management based on duration
+- VAD-based speech detection and auto-slicing
+- Configurable auto-slice mechanism that triggers on speech_end/silence events
+- Memory management for audio slices
+- Queue-based transcription processing
+- Prompt chaining from previous transcriptions
+
+## Constructor
+
+```typescript
+new RealtimeTranscriber(
+  dependencies: RealtimeTranscriberDependencies,
+  options?: RealtimeOptions,
+  callbacks?: RealtimeTranscriberCallbacks
+)
+```
+
+### Parameters
+
+<ParamField path="dependencies" type="RealtimeTranscriberDependencies" required>
+  Required dependencies for the transcriber
+  
+  <Expandable title="RealtimeTranscriberDependencies">
+    <ParamField path="whisperContext" type="WhisperContextLike" required>
+      Whisper context for transcription. Must implement `transcribeData(data: ArrayBuffer, options: TranscribeOptions)` method.
+    </ParamField>
+    
+    <ParamField path="vadContext" type="RealtimeVadContextLike">
+      Optional VAD context for speech detection. If provided, enables automatic speech detection and slicing.
+    </ParamField>
+    
+    <ParamField path="audioStream" type="AudioStreamInterface" required>
+      Audio stream interface that provides audio data. Must implement methods like `initialize()`, `start()`, `stop()`, `onData()`, etc.
+    </ParamField>
+    
+    <ParamField path="fs" type="WavFileWriterFs">
+      Optional filesystem interface for writing WAV files. Required if `audioOutputPath` is specified in options.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="options" type="RealtimeOptions">
+  Configuration options for realtime transcription
+  
+  <Expandable title="RealtimeOptions">
+    <ParamField path="audioSliceSec" type="number" default="30">
+      Duration of each audio slice in seconds
+    </ParamField>
+    
+    <ParamField path="audioMinSec" type="number" default="1">
+      Minimum audio duration in seconds before transcription
+    </ParamField>
+    
+    <ParamField path="maxSlicesInMemory" type="number" default="3">
+      Maximum number of audio slices to keep in memory. Older slices are automatically released.
+    </ParamField>
+    
+    <ParamField path="transcribeOptions" type="TranscribeOptions">
+      Options to pass to whisper transcription (e.g., language, translate, etc.)
+    </ParamField>
+    
+    <ParamField path="initialPrompt" type="string">
+      Initial prompt text to guide transcription
+    </ParamField>
+    
+    <ParamField path="promptPreviousSlices" type="boolean" default="true">
+      Whether to include previous slice transcriptions as context in the prompt
+    </ParamField>
+    
+    <ParamField path="audioOutputPath" type="string">
+      Path to write audio to a WAV file (requires `fs` dependency)
+    </ParamField>
+    
+    <ParamField path="audioStreamConfig" type="AudioStreamConfig">
+      Audio stream configuration (sampleRate, channels, bitsPerSample, bufferSize, audioSource)
+    </ParamField>
+    
+    <ParamField path="realtimeProcessingPauseMs" type="number" default="200">
+      Minimum interval in milliseconds between realtime transcription updates
+    </ParamField>
+    
+    <ParamField path="initRealtimeAfterMs" type="number" default="200">
+      Wait time in milliseconds before starting the first realtime transcription
+    </ParamField>
+    
+    <ParamField path="logger" type="(message: string) => void">
+      Custom logger function. Defaults to no-op.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="callbacks" type="RealtimeTranscriberCallbacks">
+  Event callbacks for transcription events
+  
+  <Expandable title="RealtimeTranscriberCallbacks">
+    <ParamField path="onBeginTranscribe" type="(sliceInfo) => Promise<boolean>">
+      Called before transcription starts. Return `false` to skip transcription for this slice.
+      
+      Receives: `{ audioData: Uint8Array, sliceIndex: number, duration: number, vadEvent?: RealtimeVadEvent }`
+    </ParamField>
+    
+    <ParamField path="onTranscribe" type="(event: RealtimeTranscribeEvent) => void">
+      Called when transcription completes or starts
+    </ParamField>
+    
+    <ParamField path="onBeginVad" type="(sliceInfo) => Promise<boolean>">
+      Called before VAD processing. Return `false` to skip VAD for this audio chunk.
+      
+      Receives: `{ audioData: Uint8Array, sliceIndex: number, duration: number }`
+    </ParamField>
+    
+    <ParamField path="onVad" type="(event: RealtimeVadEvent) => void">
+      Called when VAD detects speech events (start, continue, end, silence)
+    </ParamField>
+    
+    <ParamField path="onError" type="(error: string) => void">
+      Called when an error occurs
+    </ParamField>
+    
+    <ParamField path="onStatusChange" type="(isActive: boolean) => void">
+      Called when transcription status changes (started/stopped)
+    </ParamField>
+    
+    <ParamField path="onStatsUpdate" type="(event: RealtimeStatsEvent) => void">
+      Called when statistics update (memory usage, slice counts, etc.)
+    </ParamField>
+    
+    <ParamField path="onSliceTranscriptionStabilized" type="(text: string) => void">
+      Called when a final transcription for a slice is ready (after speech_end)
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+## Methods
+
+### start()
+
+Starts real-time transcription.
+
+```typescript
+await transcriber.start(): Promise<void>
+```
+
+Throws an error if transcription is already active. Initializes the audio stream and begins processing.
+
+---
+
+### stop()
+
+Stops real-time transcription.
+
+```typescript
+await transcriber.stop(): Promise<void>
+```
+
+Stops the audio stream, processes remaining queued transcriptions, waits for active transcriptions to complete, and releases resources.
+
+---
+
+### updateCallbacks()
+
+Updates event callbacks dynamically.
+
+```typescript
+transcriber.updateCallbacks(callbacks: Partial<RealtimeTranscriberCallbacks>): void
+```
+
+<ParamField path="callbacks" type="Partial<RealtimeTranscriberCallbacks>" required>
+  Callbacks to update (merged with existing callbacks)
+</ParamField>
+
+---
+
+### updateVadOptions()
+
+Updates VAD options dynamically (if VAD context is available).
+
+```typescript
+transcriber.updateVadOptions(options: Partial<VadOptions>): void
+```
+
+<ParamField path="options" type="Partial<VadOptions>" required>
+  VAD options to update (e.g., threshold, minSpeechDurationMs, etc.)
+</ParamField>
+
+---
+
+### getStatistics()
+
+Returns current statistics about the transcription session.
+
+```typescript
+transcriber.getStatistics(): Statistics
+```
+
+<ResponseField name="isActive" type="boolean">
+  Whether transcription is currently active
+</ResponseField>
+
+<ResponseField name="isTranscribing" type="boolean">
+  Whether currently processing a transcription
+</ResponseField>
+
+<ResponseField name="vadEnabled" type="boolean">
+  Whether VAD is enabled
+</ResponseField>
+
+<ResponseField name="audioStats" type="object">
+  <Expandable title="Audio statistics">
+    <ResponseField name="isRecording" type="boolean">
+      Whether audio stream is recording
+    </ResponseField>
+    
+    <ResponseField name="accumulatedSamples" type="number">
+      Total samples accumulated
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="vadStats" type="object | null">
+  <Expandable title="VAD statistics (null if VAD disabled)">
+    <ResponseField name="enabled" type="boolean">
+      Whether VAD is enabled
+    </ResponseField>
+    
+    <ResponseField name="contextAvailable" type="boolean">
+      Whether VAD context is available
+    </ResponseField>
+    
+    <ResponseField name="lastSpeechDetectedTime" type="number">
+      Timestamp of last detected speech
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="sliceStats" type="object">
+  Slice manager statistics (see SliceManager.getCurrentSliceInfo())
+</ResponseField>
+
+---
+
+### getTranscriptionResults()
+
+Returns all transcription results from completed slices.
+
+```typescript
+transcriber.getTranscriptionResults(): Array<{
+  slice: AudioSliceNoData,
+  transcribeEvent: RealtimeTranscribeEvent
+}>
+```
+
+<ResponseField name="Array" type="Array<object>">
+  Array of transcription results
+  
+  <Expandable title="Result object">
+    <ResponseField name="slice" type="AudioSliceNoData">
+      Slice metadata (without audio data): index, sampleCount, startTime, endTime, isProcessed, isReleased
+    </ResponseField>
+    
+    <ResponseField name="transcribeEvent" type="RealtimeTranscribeEvent">
+      Transcription event with result data
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+### nextSlice()
+
+Forces move to the next audio slice, finalizing the current one regardless of capacity.
+
+```typescript
+await transcriber.nextSlice(): Promise<void>
+```
+
+Useful for manually triggering transcription of the current audio buffer.
+
+---
+
+### reset()
+
+Resets all internal state (slices, queues, transcription results).
+
+```typescript
+transcriber.reset(): void
+```
+
+This does not stop the transcription - use `stop()` first if needed.
+
+---
+
+### release()
+
+Releases all resources and cleans up.
+
+```typescript
+await transcriber.release(): Promise<void>
+```
+
+Stops transcription if active and releases the audio stream and VAD context.
+
+## Event Types
+
+### RealtimeTranscribeEvent
+
+<ResponseField name="type" type="'start' | 'transcribe' | 'end' | 'error'">
+  Event type
+</ResponseField>
+
+<ResponseField name="sliceIndex" type="number">
+  Index of the audio slice being transcribed
+</ResponseField>
+
+<ResponseField name="data" type="TranscribeResult">
+  Transcription result (only for 'transcribe' type)
+</ResponseField>
+
+<ResponseField name="isCapturing" type="boolean">
+  Whether audio stream is currently recording
+</ResponseField>
+
+<ResponseField name="processTime" type="number">
+  Time taken to process transcription in milliseconds
+</ResponseField>
+
+<ResponseField name="recordingTime" type="number">
+  Duration of the audio being transcribed in milliseconds
+</ResponseField>
+
+<ResponseField name="memoryUsage" type="MemoryUsage">
+  Current memory usage statistics
+</ResponseField>
+
+<ResponseField name="vadEvent" type="RealtimeVadEvent">
+  Associated VAD event if available
+</ResponseField>
+
+### RealtimeVadEvent
+
+<ResponseField name="type" type="'speech_start' | 'speech_end' | 'speech_continue' | 'silence'">
+  VAD event type
+</ResponseField>
+
+<ResponseField name="timestamp" type="number">
+  Event timestamp
+</ResponseField>
+
+<ResponseField name="lastSpeechDetectedTime" type="number">
+  Timestamp when speech was last detected
+</ResponseField>
+
+<ResponseField name="confidence" type="number">
+  VAD confidence score
+</ResponseField>
+
+<ResponseField name="duration" type="number">
+  Duration of the audio segment in seconds
+</ResponseField>
+
+<ResponseField name="sliceIndex" type="number">
+  Associated slice index
+</ResponseField>
+
+## Example Usage
+
+```typescript
+import { RealtimeTranscriber } from 'whisper.rn'
+import { initWhisper } from 'whisper.rn'
+
+const whisperContext = await initWhisper({
+  filePath: 'ggml-base.en.bin'
+})
+
+const transcriber = new RealtimeTranscriber(
+  {
+    whisperContext,
+    audioStream: myAudioStreamAdapter,
+    vadContext: myVadContext, // Optional
+  },
+  {
+    audioSliceSec: 30,
+    maxSlicesInMemory: 3,
+    initialPrompt: 'Technical discussion about AI',
+  },
+  {
+    onTranscribe: (event) => {
+      if (event.type === 'transcribe') {
+        console.log('Transcription:', event.data?.result)
+      }
+    },
+    onVad: (event) => {
+      console.log('VAD event:', event.type, event.confidence)
+    },
+    onError: (error) => {
+      console.error('Error:', error)
+    },
+  }
+)
+
+// Start transcription
+await transcriber.start()
+
+// Later: stop transcription
+await transcriber.stop()
+
+// Get all results
+const results = transcriber.getTranscriptionResults()
+
+// Release resources
+await transcriber.release()
+```

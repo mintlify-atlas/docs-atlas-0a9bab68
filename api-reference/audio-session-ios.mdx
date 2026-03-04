@@ -1,0 +1,297 @@
+---
+title: "AudioSessionIos"
+description: "Audio session management utilities for iOS"
+---
+
+<Warning>
+  **Deprecated**: AudioSessionIos is deprecated. To use whisper.rn for realtime transcription, use the new `RealtimeTranscriber` instead.
+</Warning>
+
+`AudioSessionIos` provides utilities to manage iOS audio session settings for recording and playback. It allows you to configure audio session categories, modes, and options to control how your app interacts with the system's audio environment.
+
+**Platform**: iOS only
+
+## Import
+
+```typescript
+import { AudioSessionIos } from 'whisper.rn'
+```
+
+## Methods
+
+### getCurrentCategory()
+
+Get the current audio session category and options.
+
+```typescript
+const { category, options } = await AudioSessionIos.getCurrentCategory()
+```
+
+#### Returns
+
+<ResponseField name="category" type="AudioSessionCategoryIos" required>
+  The current audio session category
+</ResponseField>
+
+<ResponseField name="options" type="AudioSessionCategoryOptionIos[]" required>
+  Array of active category options
+</ResponseField>
+
+#### Example
+
+```typescript
+const { category, options } = await AudioSessionIos.getCurrentCategory()
+console.log('Current category:', category)
+console.log('Options:', options)
+```
+
+---
+
+### getCurrentMode()
+
+Get the current audio session mode.
+
+```typescript
+const mode = await AudioSessionIos.getCurrentMode()
+```
+
+#### Returns
+
+<ResponseField name="mode" type="AudioSessionModeIos" required>
+  The current audio session mode
+</ResponseField>
+
+#### Example
+
+```typescript
+const mode = await AudioSessionIos.getCurrentMode()
+console.log('Current mode:', mode)
+```
+
+---
+
+### setCategory()
+
+Set the audio session category with options.
+
+```typescript
+await AudioSessionIos.setCategory(category, options)
+```
+
+#### Parameters
+
+<ParamField path="category" type="AudioSessionCategoryIos" required>
+  The audio session category to set
+</ParamField>
+
+<ParamField path="options" type="AudioSessionCategoryOptionIos[]" required>
+  Array of category options to apply
+</ParamField>
+
+#### Example
+
+```typescript
+await AudioSessionIos.setCategory(
+  AudioSessionIos.Category.PlayAndRecord,
+  [AudioSessionIos.CategoryOption.MixWithOthers]
+)
+```
+
+---
+
+### setMode()
+
+Set the audio session mode.
+
+```typescript
+await AudioSessionIos.setMode(mode)
+```
+
+#### Parameters
+
+<ParamField path="mode" type="AudioSessionModeIos" required>
+  The audio session mode to set
+</ParamField>
+
+#### Example
+
+```typescript
+await AudioSessionIos.setMode(AudioSessionIos.Mode.VoiceChat)
+```
+
+---
+
+### setActive()
+
+Activate or deactivate the audio session.
+
+```typescript
+await AudioSessionIos.setActive(active)
+```
+
+#### Parameters
+
+<ParamField path="active" type="boolean" required>
+  Whether to activate (true) or deactivate (false) the audio session
+</ParamField>
+
+#### Example
+
+```typescript
+await AudioSessionIos.setActive(true)  // Activate
+await AudioSessionIos.setActive(false) // Deactivate
+```
+
+---
+
+## Enums
+
+### AudioSessionCategoryIos
+
+Audio session categories define the audio behavior of your app.
+
+**Reference**: [AVAudioSessionCategory](https://developer.apple.com/documentation/avfaudio/avaudiosessioncategory?language=objc)
+
+```typescript
+enum AudioSessionCategoryIos {
+  Ambient = 'Ambient',
+  SoloAmbient = 'SoloAmbient',
+  Playback = 'Playback',
+  Record = 'Record',
+  PlayAndRecord = 'PlayAndRecord',
+  MultiRoute = 'MultiRoute',
+}
+```
+
+**Available categories**:
+
+- `Ambient` - Audio mixes with other apps, silenced by the Ring/Silent switch
+- `SoloAmbient` - Default category, silences other audio, silenced by Ring/Silent switch  
+- `Playback` - For playing recorded music or other sounds
+- `Record` - For recording audio
+- `PlayAndRecord` - For recording and playback simultaneously (e.g., VoIP)
+- `MultiRoute` - For routing distinct audio streams to different outputs
+
+#### Usage
+
+```typescript
+AudioSessionIos.Category.PlayAndRecord
+AudioSessionIos.Category.Record
+```
+
+---
+
+### AudioSessionCategoryOptionIos
+
+Options that modify the behavior of audio session categories.
+
+**Reference**: [AVAudioSessionCategoryOptions](https://developer.apple.com/documentation/avfaudio/avaudiosessioncategoryoptions?language=objc)
+
+```typescript
+enum AudioSessionCategoryOptionIos {
+  MixWithOthers = 'MixWithOthers',
+  DuckOthers = 'DuckOthers',
+  InterruptSpokenAudioAndMixWithOthers = 'InterruptSpokenAudioAndMixWithOthers',
+  AllowBluetooth = 'AllowBluetooth',
+  AllowBluetoothA2DP = 'AllowBluetoothA2DP',
+  AllowAirPlay = 'AllowAirPlay',
+  DefaultToSpeaker = 'DefaultToSpeaker',
+}
+```
+
+**Available options**:
+
+- `MixWithOthers` - Mix your audio with audio from other apps
+- `DuckOthers` - Reduce the volume of other audio sessions
+- `InterruptSpokenAudioAndMixWithOthers` - Interrupt spoken audio content from other apps
+- `AllowBluetooth` - Allow Bluetooth hands-free devices
+- `AllowBluetoothA2DP` - Allow Bluetooth A2DP devices
+- `AllowAirPlay` - Allow audio routing to AirPlay devices
+- `DefaultToSpeaker` - Route audio to speaker instead of receiver
+
+#### Usage
+
+```typescript
+[
+  AudioSessionIos.CategoryOption.MixWithOthers,
+  AudioSessionIos.CategoryOption.DefaultToSpeaker
+]
+```
+
+---
+
+### AudioSessionModeIos
+
+Audio session modes optimize settings for specific use cases.
+
+**Reference**: [AVAudioSessionMode](https://developer.apple.com/documentation/avfaudio/avaudiosessionmode?language=objc)
+
+```typescript
+enum AudioSessionModeIos {
+  Default = 'Default',
+  VoiceChat = 'VoiceChat',
+  VideoChat = 'VideoChat',
+  GameChat = 'GameChat',
+  VideoRecording = 'VideoRecording',
+  Measurement = 'Measurement',
+  MoviePlayback = 'MoviePlayback',
+  SpokenAudio = 'SpokenAudio',
+}
+```
+
+**Available modes**:
+
+- `Default` - Default mode, no special processing
+- `VoiceChat` - Optimized for two-way voice communication
+- `VideoChat` - Optimized for video chat
+- `GameChat` - Optimized for in-game chat
+- `VideoRecording` - Optimized for video recording
+- `Measurement` - Minimizes system-supplied signal processing
+- `MoviePlayback` - Optimized for movie playback
+- `SpokenAudio` - Optimized for spoken audio (podcasts, audiobooks)
+
+#### Usage
+
+```typescript
+AudioSessionIos.Mode.VoiceChat
+AudioSessionIos.Mode.VideoRecording
+```
+
+---
+
+## Complete Example
+
+Configure audio session for voice recording with background music:
+
+```typescript
+import { AudioSessionIos } from 'whisper.rn'
+
+// Save current state
+const prevCategory = await AudioSessionIos.getCurrentCategory()
+const prevMode = await AudioSessionIos.getCurrentMode()
+
+// Configure for recording
+await AudioSessionIos.setCategory(
+  AudioSessionIos.Category.PlayAndRecord,
+  [
+    AudioSessionIos.CategoryOption.MixWithOthers,
+    AudioSessionIos.CategoryOption.DefaultToSpeaker
+  ]
+)
+await AudioSessionIos.setMode(AudioSessionIos.Mode.VoiceChat)
+await AudioSessionIos.setActive(true)
+
+// ... perform recording ...
+
+// Restore previous state
+await AudioSessionIos.setCategory(prevCategory.category, prevCategory.options)
+await AudioSessionIos.setMode(prevMode)
+await AudioSessionIos.setActive(false)
+```
+
+---
+
+## See Also
+
+- [RealtimeTranscriber](/api-reference/realtime-transcriber) - Modern realtime transcription API
+- [WhisperContext](/api-reference/whisper-context) - Main transcription context

@@ -1,0 +1,557 @@
+---
+title: "iOS Audio Session Management"
+description: "Control iOS audio session for recording and playback"
+icon: "apple"
+---
+
+<Warning>
+  The `AudioSessionIos` API is **deprecated**. For realtime transcription, use the new `RealtimeTranscriber` instead, which handles audio session management internally.
+  
+  This documentation is maintained for legacy code and understanding iOS audio session concepts.
+</Warning>
+
+## Overview
+
+The `AudioSessionIos` utility provides direct access to iOS `AVAudioSession` configuration. It allows you to control audio routing, mixing behavior, and recording permissions.
+
+**Platform**: iOS only (throws error on Android)
+
+## API Reference
+
+### Categories
+
+Audio session categories define the audio behavior of your app.
+
+```typescript AudioSessionIos.ts
+export enum AudioSessionCategoryIos {
+  Ambient = 'Ambient',
+  SoloAmbient = 'SoloAmbient',
+  Playback = 'Playback',
+  Record = 'Record',
+  PlayAndRecord = 'PlayAndRecord',
+  MultiRoute = 'MultiRoute',
+}
+```
+
+<ParamField path="Ambient" type="category">
+  Plays audio while respecting silent mode and allowing other audio to play simultaneously. Audio interrupts when screen locks.
+  
+  **Use case**: Background sounds, sound effects in games
+</ParamField>
+
+<ParamField path="SoloAmbient" type="category">
+  Default category. Audio stops other apps' audio, respects silent mode, interrupts on lock.
+  
+  **Use case**: Most apps that play audio
+</ParamField>
+
+<ParamField path="Playback" type="category">
+  Audio continues even in silent mode and when screen locks. Stops other apps' audio.
+  
+  **Use case**: Music players, podcast apps
+</ParamField>
+
+<ParamField path="Record" type="category">
+  For recording audio. Silences other audio.
+  
+  **Use case**: Voice memo apps, audio recording
+</ParamField>
+
+<ParamField path="PlayAndRecord" type="category">
+  Enables simultaneous recording and playback. Required for realtime transcription.
+  
+  **Use case**: VoIP apps, realtime transcription, video calls
+</ParamField>
+
+<ParamField path="MultiRoute" type="category">
+  Routes audio to multiple outputs (e.g., headphones and speaker simultaneously).
+  
+  **Use case**: Specialized audio routing scenarios
+</ParamField>
+
+### Category Options
+
+Modify category behavior with options:
+
+```typescript AudioSessionIos.ts
+export enum AudioSessionCategoryOptionIos {
+  MixWithOthers = 'MixWithOthers',
+  DuckOthers = 'DuckOthers',
+  InterruptSpokenAudioAndMixWithOthers = 'InterruptSpokenAudioAndMixWithOthers',
+  AllowBluetooth = 'AllowBluetooth',
+  AllowBluetoothA2DP = 'AllowBluetoothA2DP',
+  AllowAirPlay = 'AllowAirPlay',
+  DefaultToSpeaker = 'DefaultToSpeaker',
+}
+```
+
+<ParamField path="MixWithOthers" type="option">
+  Allow your audio to play simultaneously with other apps' audio.
+  
+  **Example**: Background music in navigation app
+</ParamField>
+
+<ParamField path="DuckOthers" type="option">
+  Lower volume of other apps' audio while your audio plays.
+  
+  **Example**: Navigation voice prompts over music
+</ParamField>
+
+<ParamField path="InterruptSpokenAudioAndMixWithOthers" type="option">
+  Pauses spoken audio (podcasts, audiobooks) but mixes with music.
+  
+  **Example**: Voice assistant interrupting podcast
+</ParamField>
+
+<ParamField path="AllowBluetooth" type="option">
+  Enable Bluetooth input devices (for recording).
+  
+  **Example**: Recording with Bluetooth headset mic
+</ParamField>
+
+<ParamField path="AllowBluetoothA2DP" type="option">
+  Enable Bluetooth A2DP output (for playback).
+  
+  **Example**: Play audio through Bluetooth speakers
+</ParamField>
+
+<ParamField path="AllowAirPlay" type="option">
+  Enable AirPlay output routing.
+  
+  **Example**: Stream audio to AirPlay devices
+</ParamField>
+
+<ParamField path="DefaultToSpeaker" type="option">
+  Route audio to speaker instead of receiver (for `PlayAndRecord`).
+  
+  **Example**: Speakerphone mode in VoIP
+</ParamField>
+
+### Modes
+
+Modes optimize the audio session for specific use cases:
+
+```typescript AudioSessionIos.ts
+export enum AudioSessionModeIos {
+  Default = 'Default',
+  VoiceChat = 'VoiceChat',
+  VideoChat = 'VideoChat',
+  GameChat = 'GameChat',
+  VideoRecording = 'VideoRecording',
+  Measurement = 'Measurement',
+  MoviePlayback = 'MoviePlayback',
+  SpokenAudio = 'SpokenAudio',
+}
+```
+
+<ParamField path="Default" type="mode">
+  Default mode, no special optimizations.
+</ParamField>
+
+<ParamField path="VoiceChat" type="mode">
+  Optimized for voice chat (echo cancellation, voice processing).
+  
+  **Use with**: `PlayAndRecord` category
+</ParamField>
+
+<ParamField path="VideoChat" type="mode">
+  Optimized for video calls.
+  
+  **Use with**: `PlayAndRecord` category
+</ParamField>
+
+<ParamField path="GameChat" type="mode">
+  Optimized for in-game voice chat.
+  
+  **Use with**: `PlayAndRecord` category
+</ParamField>
+
+<ParamField path="VideoRecording" type="mode">
+  Optimized for video recording (ambient sound capture).
+  
+  **Use with**: `Record` or `PlayAndRecord`
+</ParamField>
+
+<ParamField path="Measurement" type="mode">
+  Disables audio processing for accurate measurements.
+  
+  **Use with**: `Record` category
+</ParamField>
+
+<ParamField path="MoviePlayback" type="mode">
+  Optimized for movie/video playback.
+  
+  **Use with**: `Playback` category
+</ParamField>
+
+<ParamField path="SpokenAudio" type="mode">
+  Optimized for spoken content (podcasts, audiobooks).
+  
+  **Use with**: `Playback` category
+</ParamField>
+
+## Methods
+
+### getCurrentCategory
+
+Get the current audio session category and options.
+
+```typescript
+const current = await AudioSessionIos.getCurrentCategory()
+console.log(current.category)  // 'PlayAndRecord'
+console.log(current.options)   // ['AllowBluetooth', 'DefaultToSpeaker']
+```
+
+<ResponseField name="category" type="AudioSessionCategoryIos">
+  Current audio session category
+</ResponseField>
+
+<ResponseField name="options" type="AudioSessionCategoryOptionIos[]">
+  Array of active category options
+</ResponseField>
+
+### getCurrentMode
+
+Get the current audio session mode.
+
+```typescript
+const mode = await AudioSessionIos.getCurrentMode()
+console.log(mode)  // 'VoiceChat'
+```
+
+<ResponseField name="mode" type="AudioSessionModeIos">
+  Current audio session mode
+</ResponseField>
+
+### setCategory
+
+Set audio session category and options.
+
+```typescript
+await AudioSessionIos.setCategory(
+  AudioSessionIos.Category.PlayAndRecord,
+  [
+    AudioSessionIos.CategoryOption.AllowBluetooth,
+    AudioSessionIos.CategoryOption.DefaultToSpeaker,
+  ]
+)
+```
+
+<ParamField path="category" type="AudioSessionCategoryIos" required>
+  The audio session category to set
+</ParamField>
+
+<ParamField path="options" type="AudioSessionCategoryOptionIos[]" required>
+  Array of category options (can be empty)
+</ParamField>
+
+### setMode
+
+Set audio session mode.
+
+```typescript
+await AudioSessionIos.setMode(AudioSessionIos.Mode.VoiceChat)
+```
+
+<ParamField path="mode" type="AudioSessionModeIos" required>
+  The audio session mode to set
+</ParamField>
+
+### setActive
+
+Activate or deactivate the audio session.
+
+```typescript
+// Activate session (required before recording/playback)
+await AudioSessionIos.setActive(true)
+
+// Deactivate session
+await AudioSessionIos.setActive(false)
+```
+
+<ParamField path="active" type="boolean" required>
+  `true` to activate, `false` to deactivate
+</ParamField>
+
+## Common Configurations
+
+### Realtime Transcription (Recommended)
+
+```typescript
+import { AudioSessionIos } from 'whisper.rn'
+
+// Configure for recording with speaker output
+await AudioSessionIos.setCategory(
+  AudioSessionIos.Category.PlayAndRecord,
+  [AudioSessionIos.CategoryOption.DefaultToSpeaker]
+)
+await AudioSessionIos.setMode(AudioSessionIos.Mode.VoiceChat)
+await AudioSessionIos.setActive(true)
+
+// Start recording...
+```
+
+### Voice Recording Only
+
+```typescript
+await AudioSessionIos.setCategory(
+  AudioSessionIos.Category.Record,
+  []
+)
+await AudioSessionIos.setMode(AudioSessionIos.Mode.Default)
+await AudioSessionIos.setActive(true)
+```
+
+### Recording with Bluetooth
+
+```typescript
+await AudioSessionIos.setCategory(
+  AudioSessionIos.Category.PlayAndRecord,
+  [
+    AudioSessionIos.CategoryOption.AllowBluetooth,
+    AudioSessionIos.CategoryOption.DefaultToSpeaker,
+  ]
+)
+await AudioSessionIos.setMode(AudioSessionIos.Mode.VoiceChat)
+await AudioSessionIos.setActive(true)
+```
+
+### Background Recording
+
+```typescript
+// Configure audio session
+await AudioSessionIos.setCategory(
+  AudioSessionIos.Category.Record,
+  [AudioSessionIos.CategoryOption.MixWithOthers]
+)
+await AudioSessionIos.setMode(AudioSessionIos.Mode.Default)
+await AudioSessionIos.setActive(true)
+
+// Also enable background mode in Info.plist:
+// UIBackgroundModes: ['audio']
+```
+
+## State Management Pattern
+
+### Save and Restore
+
+```typescript
+type AudioSessionState = {
+  category: AudioSessionCategoryIos
+  options: AudioSessionCategoryOptionIos[]
+  mode: AudioSessionModeIos
+}
+
+// Save current state
+const saveState = async (): Promise<AudioSessionState> => {
+  const category = await AudioSessionIos.getCurrentCategory()
+  const mode = await AudioSessionIos.getCurrentMode()
+  
+  return {
+    category: category.category,
+    options: category.options,
+    mode,
+  }
+}
+
+// Restore state
+const restoreState = async (state: AudioSessionState) => {
+  await AudioSessionIos.setCategory(state.category, state.options)
+  await AudioSessionIos.setMode(state.mode)
+}
+
+// Usage
+const previousState = await saveState()
+
+// Configure for recording
+await AudioSessionIos.setCategory(
+  AudioSessionIos.Category.PlayAndRecord,
+  [AudioSessionIos.CategoryOption.DefaultToSpeaker]
+)
+
+// ... record audio ...
+
+// Restore
+await restoreState(previousState)
+```
+
+### React Hook
+
+```typescript
+import { useEffect } from 'react'
+import { AudioSessionIos } from 'whisper.rn'
+
+function useAudioSession(
+  category: AudioSessionCategoryIos,
+  options: AudioSessionCategoryOptionIos[],
+  mode?: AudioSessionModeIos
+) {
+  useEffect(() => {
+    let previousState: any
+
+    const setup = async () => {
+      // Save current state
+      const currentCategory = await AudioSessionIos.getCurrentCategory()
+      const currentMode = await AudioSessionIos.getCurrentMode()
+      previousState = {
+        category: currentCategory.category,
+        options: currentCategory.options,
+        mode: currentMode,
+      }
+
+      // Set new configuration
+      await AudioSessionIos.setCategory(category, options)
+      if (mode) {
+        await AudioSessionIos.setMode(mode)
+      }
+      await AudioSessionIos.setActive(true)
+    }
+
+    setup()
+
+    return () => {
+      // Restore on unmount
+      if (previousState) {
+        AudioSessionIos.setCategory(previousState.category, previousState.options)
+        AudioSessionIos.setMode(previousState.mode)
+        AudioSessionIos.setActive(false)
+      }
+    }
+  }, [category, options, mode])
+}
+
+// Usage in component
+function RecordingComponent() {
+  useAudioSession(
+    AudioSessionIos.Category.PlayAndRecord,
+    [AudioSessionIos.CategoryOption.DefaultToSpeaker],
+    AudioSessionIos.Mode.VoiceChat
+  )
+
+  return <View>...</View>
+}
+```
+
+## Migration to RealtimeTranscriber
+
+Instead of managing audio session manually, use `RealtimeTranscriber` with automatic session management:
+
+### Before (Deprecated)
+
+```typescript
+import { AudioSessionIos } from 'whisper.rn'
+
+// Manual configuration
+await AudioSessionIos.setCategory(
+  AudioSessionIos.Category.PlayAndRecord,
+  [AudioSessionIos.CategoryOption.DefaultToSpeaker]
+)
+await AudioSessionIos.setMode(AudioSessionIos.Mode.VoiceChat)
+await AudioSessionIos.setActive(true)
+
+// Start recording with old API
+const { subscribe, stop } = await whisperContext.transcribeRealtime()
+```
+
+### After (Recommended)
+
+```typescript
+import { RealtimeTranscriber } from 'whisper.rn/src/realtime-transcription'
+import { AudioPcmStreamAdapter } from 'whisper.rn/src/realtime-transcription/adapters'
+
+const audioStream = new AudioPcmStreamAdapter()
+
+const transcriber = new RealtimeTranscriber(
+  {
+    whisperContext,
+    audioStream,
+  },
+  {
+    audioSliceSec: 30,
+    transcribeOptions: { language: 'en' },
+  },
+  {
+    onTranscribe: (event) => {
+      console.log('Result:', event.data?.result)
+    },
+  }
+)
+
+await transcriber.start()
+// Audio session handled automatically
+```
+
+## Permissions
+
+Don't forget to request microphone permissions:
+
+### Info.plist
+
+```xml
+<key>NSMicrophoneUsageDescription</key>
+<string>We need access to your microphone for voice transcription</string>
+```
+
+### Runtime Permission
+
+```typescript
+import { PermissionsAndroid, Platform } from 'react-native'
+
+const requestMicrophonePermission = async () => {
+  if (Platform.OS === 'android') {
+    const granted = await PermissionsAndroid.request(
+      PermissionsAndroid.PERMISSIONS.RECORD_AUDIO
+    )
+    return granted === PermissionsAndroid.RESULTS.GRANTED
+  }
+  return true // iOS handles via Info.plist
+}
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Error: Only supported on iOS">
+    This API is iOS-only. For Android, audio session management is handled differently.
+    
+    **Solution**: Wrap calls in platform check:
+    ```typescript
+    if (Platform.OS === 'ios') {
+      await AudioSessionIos.setCategory(...)
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Audio Not Recording">
+    **Check**:
+    - Microphone permission granted?
+    - Audio session activated? (`setActive(true)`)
+    - Correct category? (Should be `Record` or `PlayAndRecord`)
+    - Device not in silent mode? (Use `Playback` or `PlayAndRecord` to ignore silent mode)
+  </Accordion>
+
+  <Accordion title="Audio Interruptions">
+    Audio can be interrupted by:
+    - Phone calls
+    - Other apps taking audio focus
+    - Lock screen (depending on category)
+    
+    **Solution**: Use `Playback` or `PlayAndRecord` category to continue in background
+  </Accordion>
+
+  <Accordion title="Bluetooth Not Working">
+    **Solution**: Add `AllowBluetooth` option:
+    ```typescript
+    await AudioSessionIos.setCategory(
+      AudioSessionIos.Category.PlayAndRecord,
+      [AudioSessionIos.CategoryOption.AllowBluetooth]
+    )
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Related
+
+- [Realtime Transcription](/api-reference/realtime-transcriber) - Modern realtime transcription API
+- [Custom Audio Adapters](/advanced/custom-audio-adapters) - Audio stream integration
+- [Apple AVAudioSession Documentation](https://developer.apple.com/documentation/avfaudio/avaudiosession) - Official iOS documentation

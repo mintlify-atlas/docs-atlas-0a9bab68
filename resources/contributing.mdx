@@ -1,0 +1,455 @@
+---
+title: Contributing
+description: How to contribute to whisper.rn
+---
+
+Contributions to whisper.rn are always welcome, no matter how large or small!
+
+We want this community to be friendly and respectful to each other. Please follow the [code of conduct](https://github.com/mybigday/whisper.rn/blob/master/CODE_OF_CONDUCT.md) in all your interactions with the project.
+
+## Development Workflow
+
+### Getting Started
+
+<Steps>
+
+<Step title="Clone and install dependencies">
+Clone the repository and install dependencies using Yarn:
+
+```bash
+git clone https://github.com/mybigday/whisper.rn.git
+cd whisper.rn
+yarn
+```
+
+<Note>
+While it's possible to use `npm`, the project tooling is built around `yarn`, so you'll have an easier time using Yarn for development.
+</Note>
+</Step>
+
+<Step title="Bootstrap the project">
+Run the bootstrap command to set up all packages and build the whisper.cpp submodule:
+
+```bash
+yarn bootstrap
+```
+
+This command:
+- Installs dependencies for all packages
+- Builds the whisper.cpp native library
+- Sets up the example app
+</Step>
+
+<Step title="Start the example app">
+The example app is the best way to test your changes during development.
+
+**Start Metro bundler:**
+```bash
+yarn example start
+```
+
+**Run on Android:**
+```bash
+yarn example android
+```
+
+**Run on iOS:**
+```bash
+yarn example pods  # Install iOS dependencies
+yarn example ios
+```
+</Step>
+
+</Steps>
+
+### Development Tips
+
+<Accordion title="JavaScript/TypeScript changes">
+Any changes to JavaScript or TypeScript code will be reflected in the example app **without a rebuild**. Just reload the app:
+
+- **iOS**: Cmd+R in simulator
+- **Android**: Double-tap R or Cmd+M > Reload
+</Accordion>
+
+<Accordion title="Native code changes">
+If you modify native code (Objective-C, Swift, Java, Kotlin, C++), you'll need to rebuild:
+
+```bash
+# iOS
+yarn example ios
+
+# Android
+yarn example android
+```
+</Accordion>
+
+<Accordion title="Testing performance">
+Always test transcription performance in **Release mode**:
+
+```bash
+# iOS
+yarn example ios --mode Release
+
+# Android
+yarn example android --mode release
+```
+
+Debug builds are significantly slower and don't represent actual performance.
+</Accordion>
+
+### Editing Native Code
+
+<Accordion title="iOS: Objective-C and Swift">
+Open the example app workspace in Xcode:
+
+```bash
+open example/ios/RNWhisperExample.xcworkspace
+```
+
+Find the library source files at:
+- **Pods > Development Pods > whisper-rn**
+
+Edit the files directly in Xcode. Changes will be reflected when you rebuild.
+</Accordion>
+
+<Accordion title="Android: Java and Kotlin">
+Open the example Android project in Android Studio:
+
+```bash
+# In Android Studio: File > Open
+# Navigate to: whisper.rn/example/android
+```
+
+Find the library source files at:
+- **Android > whisper.rn** (in project view)
+
+Edit the files directly in Android Studio.
+</Accordion>
+
+<Accordion title="C++ core files">
+C++ files are located in the `cpp/` directory:
+
+- `cpp/rn-whisper.cpp/h` - Main whisper integration
+- `cpp/rn-audioutils.cpp/h` - Audio utilities
+- `cpp/jsi/` - JSI bindings for ArrayBuffer support
+
+Edit with your preferred C++ editor. Rebuild the native app to see changes.
+</Accordion>
+
+## Code Quality
+
+### Linting and Type Checking
+
+Before committing, ensure your code passes all checks:
+
+<Steps>
+
+<Step title="Run TypeScript type checking">
+```bash
+yarn typecheck
+```
+
+Fix any type errors before committing.
+</Step>
+
+<Step title="Run ESLint">
+```bash
+yarn lint
+```
+
+To automatically fix formatting errors:
+```bash
+yarn lint --fix
+```
+</Step>
+
+<Step title="Run tests">
+```bash
+yarn test
+```
+
+Remember to add tests for your changes if possible.
+</Step>
+
+</Steps>
+
+<Note>
+Pre-commit hooks will automatically verify that linting and tests pass before allowing a commit.
+</Note>
+
+### Commit Message Convention
+
+We follow the [Conventional Commits](https://www.conventionalcommits.org/en) specification:
+
+**Format:**
+```
+type(scope): subject
+
+body (optional)
+
+footer (optional)
+```
+
+**Types:**
+
+- `feat:` - New features
+  ```bash
+  git commit -m "feat: add Core ML support for iOS"
+  ```
+
+- `fix:` - Bug fixes
+  ```bash
+  git commit -m "fix: crash on Android when releasing context"
+  ```
+
+- `refactor:` - Code refactoring
+  ```bash
+  git commit -m "refactor: migrate from class components to hooks"
+  ```
+
+- `docs:` - Documentation changes
+  ```bash
+  git commit -m "docs: add usage example for VAD"
+  ```
+
+- `test:` - Adding or updating tests
+  ```bash
+  git commit -m "test: add integration tests for realtime transcription"
+  ```
+
+- `chore:` - Tooling and configuration changes
+  ```bash
+  git commit -m "chore: update CI config for new Node version"
+  ```
+
+<Warning>
+Pre-commit hooks verify that your commit message matches this format. Commits with invalid messages will be rejected.
+</Warning>
+
+## Testing
+
+### Unit Tests
+
+Run the test suite:
+
+```bash
+yarn test
+```
+
+Run tests in watch mode during development:
+
+```bash
+yarn test --watch
+```
+
+### Test Coverage
+
+Generate coverage report:
+
+```bash
+yarn test --coverage
+```
+
+### Using Mock in Your Tests
+
+whisper.rn provides a Jest mock for testing:
+
+```typescript
+jest.mock('whisper.rn', () => require('whisper.rn/jest-mock'))
+
+import { initWhisper } from 'whisper.rn'
+
+test('transcribe audio', async () => {
+  const context = await initWhisper({ filePath: 'model.bin' })
+  const result = await context.transcribe('audio.wav')
+  
+  expect(result.result).toBe('mocked transcription')
+})
+```
+
+## Available Scripts
+
+The `package.json` includes these development scripts:
+
+| Script | Description |
+|--------|-------------|
+| `yarn bootstrap` | Setup project by installing all dependencies |
+| `yarn build` | Build TypeScript library |
+| `yarn typecheck` | Type-check files with TypeScript |
+| `yarn lint` | Lint files with ESLint |
+| `yarn lint --fix` | Fix linting errors automatically |
+| `yarn test` | Run unit tests with Jest |
+| `yarn docgen` | Generate API documentation |
+| `yarn example start` | Start Metro server for example app |
+| `yarn example android` | Run example app on Android |
+| `yarn example ios` | Run example app on iOS |
+| `yarn example pods` | Install iOS pods for example app |
+| `yarn release` | Publish new version (maintainers only) |
+
+## Submitting Pull Requests
+
+<Note>
+**First time contributing to open source?** Learn from this free series: [How to Contribute to an Open Source Project on GitHub](https://app.egghead.io/playlists/how-to-contribute-to-an-open-source-project-on-github)
+</Note>
+
+### Before Submitting
+
+<Steps>
+
+<Step title="Create a focused PR">
+Prefer **small pull requests focused on one change**. This makes review easier and faster.
+
+- One bug fix per PR
+- One feature per PR
+- Related changes can be grouped together
+</Step>
+
+<Step title="Verify code quality">
+Ensure all checks pass:
+
+```bash
+yarn typecheck
+yarn lint
+yarn test
+```
+</Step>
+
+<Step title="Test thoroughly">
+- Test on both iOS and Android if applicable
+- Test in Release mode for performance changes
+- Add unit tests for new functionality
+- Test with the example app
+</Step>
+
+<Step title="Update documentation">
+If your changes affect the API or user-facing behavior:
+
+- Update TypeScript types and JSDoc comments
+- Add code examples if applicable
+- Update README if needed
+</Step>
+
+</Steps>
+
+### PR Guidelines
+
+<Accordion title="For API or implementation changes">
+**Discuss with maintainers first** by opening an issue before starting work.
+
+This ensures:
+- Your approach aligns with project goals
+- No duplicate work is being done
+- Design can be discussed before implementation
+
+```bash
+# Example issue title
+"[RFC] Add support for streaming transcription results"
+```
+</Accordion>
+
+<Accordion title="Follow the PR template">
+When opening a pull request, fill out the template completely:
+
+- **What**: Describe what the PR does
+- **Why**: Explain why this change is needed
+- **How**: Describe your implementation approach
+- **Testing**: Explain how you tested the changes
+- **Screenshots**: Include for UI changes
+- **Checklist**: Complete all items
+</Accordion>
+
+<Accordion title="Keep PRs up to date">
+If the main branch changes during review:
+
+```bash
+git checkout main
+git pull
+git checkout your-branch
+git rebase main
+```
+
+Resolve any conflicts and push:
+
+```bash
+git push --force-with-lease
+```
+</Accordion>
+
+### Review Process
+
+1. **Automated checks** run on every PR (CI, linting, tests)
+2. **Maintainer review** - A maintainer will review your code
+3. **Requested changes** - Address any feedback
+4. **Approval** - Once approved, a maintainer will merge
+
+<Note>
+Be patient during review. Maintainers are volunteers and may take time to respond.
+</Note>
+
+## Publishing (Maintainers Only)
+
+To publish a new version:
+
+```bash
+yarn release
+```
+
+This uses [release-it](https://github.com/release-it/release-it) to:
+- Bump version based on semver
+- Create git tags
+- Generate changelog
+- Publish to npm
+- Create GitHub release
+
+## Project Structure
+
+Understanding the codebase:
+
+```
+whisper.rn/
+├── src/                    # TypeScript source
+│   ├── index.ts           # Main API exports
+│   ├── NativeRNWhisper.ts # TurboModule spec
+│   └── realtime-transcription/  # RealtimeTranscriber
+├── cpp/                   # C++ core
+│   ├── rn-whisper.cpp     # Whisper integration
+│   ├── jsi/               # JSI bindings
+│   └── whisper.cpp/       # whisper.cpp submodule
+├── ios/                   # iOS native code
+│   ├── RNWhisper.mm       # Main module
+│   └── rnwhisper.xcframework  # Prebuilt framework
+├── android/               # Android native code
+│   ├── src/main/java/     # Java code
+│   └── src/main/jni.cpp   # JNI bridge
+├── example/               # Example app
+└── docs/                  # Documentation
+```
+
+## Getting Help
+
+If you need help contributing:
+
+1. **Check existing issues** - Your question might already be answered
+2. **Ask in discussions** - Use [GitHub Discussions](https://github.com/mybigday/whisper.rn/discussions) for questions
+3. **Join the community** - Connect with other contributors
+4. **Read the docs** - Check documentation for guidance
+
+## Code of Conduct
+
+This project follows the [Contributor Covenant Code of Conduct](https://github.com/mybigday/whisper.rn/blob/master/CODE_OF_CONDUCT.md).
+
+By participating, you agree to:
+- Be respectful and inclusive
+- Accept constructive criticism
+- Focus on what's best for the community
+- Show empathy towards others
+
+Violations can be reported to the project maintainers.
+
+## License
+
+By contributing, you agree that your contributions will be licensed under the same license as the project (MIT License).
+
+## Thank You!
+
+Thank you for contributing to whisper.rn! Your efforts help make speech recognition better for everyone. 🎉

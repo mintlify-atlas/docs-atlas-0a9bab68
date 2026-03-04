@@ -1,0 +1,320 @@
+---
+title: 'SliceManager'
+description: 'Audio slice memory management for realtime transcription'
+---
+
+## Overview
+
+SliceManager handles automatic slicing of continuous audio streams into manageable chunks for transcription. It manages memory efficiently by limiting the number of slices kept in memory and automatically releasing old slices.
+
+**Key Features:**
+- Automatic audio slicing based on duration
+- Circular buffer strategy for memory management
+- Configurable slice duration and memory limits
+- Audio data retrieval for transcription
+- Memory usage tracking and statistics
+
+## Constructor
+
+```typescript
+new SliceManager(
+  sliceDurationSec?: number,
+  maxSlicesInMemory?: number,
+  sampleRate?: number
+)
+```
+
+### Parameters
+
+<ParamField path="sliceDurationSec" type="number" default="30">
+  Duration of each audio slice in seconds
+</ParamField>
+
+<ParamField path="maxSlicesInMemory" type="number" default="1">
+  Maximum number of audio slices to keep in memory. Older slices are automatically released when this limit is exceeded.
+</ParamField>
+
+<ParamField path="sampleRate" type="number" default="16000">
+  Audio sample rate in Hz (whisper.cpp requires 16000 Hz)
+</ParamField>
+
+## Methods
+
+### addAudioData()
+
+Adds audio data to the current slice. Automatically creates new slices when capacity is reached.
+
+```typescript
+sliceManager.addAudioData(audioData: Uint8Array): { slice?: AudioSlice }
+```
+
+<ParamField path="audioData" type="Uint8Array" required>
+  Raw audio data to add (16-bit PCM format, 2 bytes per sample)
+</ParamField>
+
+<ResponseField name="slice" type="AudioSlice">
+  The current audio slice being built
+</ResponseField>
+
+The method automatically:
+- Creates a new slice if none exists
+- Appends data to the current slice
+- Finalizes and creates a new slice when capacity (80% full) is reached
+- Cleans up old slices when memory limit is exceeded
+
+---
+
+### getSliceForTranscription()
+
+Returns the next unprocessed slice ready for transcription.
+
+```typescript
+sliceManager.getSliceForTranscription(): AudioSlice | null
+```
+
+<ResponseField name="AudioSlice | null" type="AudioSlice | null">
+  The next slice to transcribe, or null if no unprocessed slices are available
+</ResponseField>
+
+---
+
+### getAudioDataForTranscription()
+
+Retrrieves audio data for a specific slice index.
+
+```typescript
+sliceManager.getAudioDataForTranscription(sliceIndex: number): Uint8Array | null
+```
+
+<ParamField path="sliceIndex" type="number" required>
+  Index of the slice to retrieve audio data from
+</ParamField>
+
+<ResponseField name="Uint8Array | null" type="Uint8Array | null">
+  Audio data for the specified slice, or null if slice not found or has no data
+</ResponseField>
+
+---
+
+### getSliceByIndex()
+
+Retrieves a specific slice by its index.
+
+```typescript
+sliceManager.getSliceByIndex(sliceIndex: number): AudioSlice | null
+```
+
+<ParamField path="sliceIndex" type="number" required>
+  Index of the slice to retrieve
+</ParamField>
+
+<ResponseField name="AudioSlice | null" type="AudioSlice | null">
+  The requested slice, or null if not found
+</ResponseField>
+
+---
+
+### markSliceAsProcessed()
+
+Marks a slice as processed after transcription.
+
+```typescript
+sliceManager.markSliceAsProcessed(sliceIndex: number): void
+```
+
+<ParamField path="sliceIndex" type="number" required>
+  Index of the slice to mark as processed
+</ParamField>
+
+---
+
+### moveToNextTranscribeSlice()
+
+Moves the internal transcription pointer to the next slice.
+
+```typescript
+sliceManager.moveToNextTranscribeSlice(): void
+```
+
+---
+
+### forceNextSlice()
+
+Forces finalization of the current slice and moves to the next one, regardless of capacity.
+
+```typescript
+sliceManager.forceNextSlice(): { slice?: AudioSlice }
+```
+
+<ResponseField name="slice" type="AudioSlice">
+  The finalized slice, if it contains data
+</ResponseField>
+
+Useful for manually triggering slice finalization (e.g., on speech_end events).
+
+---
+
+### getMemoryUsage()
+
+Returns current memory usage statistics.
+
+```typescript
+sliceManager.getMemoryUsage(): MemoryUsage
+```
+
+<ResponseField name="slicesInMemory" type="number">
+  Number of active slices in memory (not released)
+</ResponseField>
+
+<ResponseField name="totalSamples" type="number">
+  Total number of audio samples across all active slices
+</ResponseField>
+
+<ResponseField name="estimatedMB" type="number">
+  Estimated memory usage in megabytes (rounded to 2 decimal places)
+</ResponseField>
+
+---
+
+### getCurrentSliceInfo()
+
+Returns information about the current slice state.
+
+```typescript
+sliceManager.getCurrentSliceInfo(): SliceInfo
+```
+
+<ResponseField name="currentSliceIndex" type="number">
+  Index of the slice currently being built
+</ResponseField>
+
+<ResponseField name="transcribeSliceIndex" type="number">
+  Index of the next slice to be transcribed
+</ResponseField>
+
+<ResponseField name="totalSlices" type="number">
+  Total number of slices in memory
+</ResponseField>
+
+<ResponseField name="memoryUsage" type="MemoryUsage">
+  Current memory usage statistics
+</ResponseField>
+
+---
+
+### reset()
+
+Resets the slice manager, releasing all slices and resetting indices.
+
+```typescript
+sliceManager.reset(): void
+```
+
+This:
+- Releases all slices (clears audio data)
+- Resets slice indices to 0
+- Clears the internal slice array
+
+## Types
+
+### AudioSlice
+
+<ResponseField name="index" type="number">
+  Unique index of the slice
+</ResponseField>
+
+<ResponseField name="data" type="Uint8Array">
+  Raw audio data (16-bit PCM)
+</ResponseField>
+
+<ResponseField name="sampleCount" type="number">
+  Number of bytes in the audio data
+</ResponseField>
+
+<ResponseField name="startTime" type="number">
+  Timestamp when slice was created (milliseconds)
+</ResponseField>
+
+<ResponseField name="endTime" type="number">
+  Timestamp of last data added to slice (milliseconds)
+</ResponseField>
+
+<ResponseField name="isProcessed" type="boolean">
+  Whether the slice has been transcribed
+</ResponseField>
+
+<ResponseField name="isReleased" type="boolean">
+  Whether the slice has been released from memory
+</ResponseField>
+
+### MemoryUsage
+
+<ResponseField name="slicesInMemory" type="number">
+  Number of active slices
+</ResponseField>
+
+<ResponseField name="totalSamples" type="number">
+  Total audio samples
+</ResponseField>
+
+<ResponseField name="estimatedMB" type="number">
+  Estimated memory in MB
+</ResponseField>
+
+## Example Usage
+
+```typescript
+import { SliceManager } from 'whisper.rn'
+
+// Create a slice manager with 30-second slices, keeping max 3 in memory
+const sliceManager = new SliceManager(30, 3, 16000)
+
+// Add audio data (e.g., from microphone)
+const { slice } = sliceManager.addAudioData(audioChunk)
+
+// Get slice for transcription
+const sliceToTranscribe = sliceManager.getSliceForTranscription()
+
+if (sliceToTranscribe) {
+  const audioData = sliceManager.getAudioDataForTranscription(
+    sliceToTranscribe.index
+  )
+  
+  // Transcribe the audio data...
+  // ...
+  
+  // Mark as processed
+  sliceManager.markSliceAsProcessed(sliceToTranscribe.index)
+  sliceManager.moveToNextTranscribeSlice()
+}
+
+// Check memory usage
+const memUsage = sliceManager.getMemoryUsage()
+console.log(`Memory: ${memUsage.estimatedMB} MB, ${memUsage.slicesInMemory} slices`)
+
+// Force next slice (e.g., on speech_end event)
+const { slice: finalizedSlice } = sliceManager.forceNextSlice()
+
+// Get current state
+const info = sliceManager.getCurrentSliceInfo()
+console.log(`Current slice: ${info.currentSliceIndex}`)
+
+// Reset when done
+sliceManager.reset()
+```
+
+## Memory Management Strategy
+
+SliceManager uses a circular buffer approach:
+
+1. **Slice Creation**: New slices are created when audio data is added
+2. **Auto-Finalization**: Slices are finalized when they reach 80% capacity
+3. **Memory Limit**: When `maxSlicesInMemory` is exceeded, oldest slices are released
+4. **Data Cleanup**: Released slices have their audio data cleared to free memory
+5. **Slice Retention**: Only the most recent `maxSlicesInMemory` slices are kept
+
+This ensures:
+- Predictable memory usage
+- No memory leaks from unbounded audio buffers
+- Access to recent audio history for context
+- Automatic garbage collection of old data

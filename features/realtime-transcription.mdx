@@ -1,0 +1,494 @@
+---
+title: Realtime Transcription
+description: Live microphone transcription with VAD, auto-slicing, and memory management
+---
+
+The `RealtimeTranscriber` class provides enhanced real-time audio transcription with Voice Activity Detection, automatic audio slicing, and intelligent memory management.
+
+## Overview
+
+**Key Features:**
+- **VAD Integration** - Detect speech vs silence, auto-slice on speech end
+- **Auto-Slicing** - Configurable slice duration (default: 30s)
+- **Memory Management** - Circular buffer keeps limited slices in memory
+- **Queue-based Processing** - Sequential transcription with one job at a time
+- **Prompt Chaining** - Use previous transcriptions as context
+- **File Recording** - Optional WAV file output
+
+<Warning>
+  The legacy `transcribeRealtime()` method is deprecated. Use `RealtimeTranscriber` for all new projects.
+</Warning>
+
+## Dependencies
+
+RealtimeTranscriber requires:
+
+1. **Audio Stream Adapter** - e.g., `AudioPcmStreamAdapter` (requires `@fugood/react-native-audio-pcm-stream`)
+2. **File System** (optional) - For WAV output (e.g., `react-native-fs`)
+3. **VAD Context** (optional) - For speech detection
+
+```bash
+npm install @fugood/react-native-audio-pcm-stream react-native-fs
+```
+
+## Basic Setup
+
+<Steps>
+
+<Step title="Import dependencies">
+  ```typescript
+  import { initWhisper, initWhisperVad } from 'whisper.rn'
+  import { RealtimeTranscriber } from 'whisper.rn/realtime-transcription'
+  import { AudioPcmStreamAdapter } from 'whisper.rn/realtime-transcription/adapters'
+  import RNFS from 'react-native-fs'
+  ```
+  
+  <Tip>
+    If your RN packager doesn't support package exports, use:
+    ```typescript
+    import { RealtimeTranscriber } from 'whisper.rn/src/realtime-transcription'
+    import { AudioPcmStreamAdapter } from 'whisper.rn/src/realtime-transcription/adapters'
+    ```
+  </Tip>
+</Step>
+
+<Step title="Initialize contexts">
+  ```typescript
+  // Initialize Whisper context
+  const whisperContext = await initWhisper({
+    filePath: require('./assets/ggml-base.bin')
+  })
+  
+  // Initialize VAD context (optional but recommended)
+  const vadContext = await initWhisperVad({
+    filePath: require('./assets/ggml-silero-v6.2.0.bin')
+  })
+  ```
+</Step>
+
+<Step title="Create audio stream adapter">
+  ```typescript
+  const audioStream = new AudioPcmStreamAdapter()
+  ```
+</Step>
+
+<Step title="Create RealtimeTranscriber">
+  ```typescript
+  const transcriber = new RealtimeTranscriber(
+    // Dependencies
+    {
+      whisperContext,
+      vadContext,      // Optional
+      audioStream,
+      fs: RNFS         // Optional - for WAV output
+    },
+    // Options
+    {
+      audioSliceSec: 30,
+      audioMinSec: 1,
+      maxSlicesInMemory: 3,
+      transcribeOptions: { language: 'en' }
+    },
+    // Callbacks
+    {
+      onTranscribe: (event) => {
+        console.log('Transcription:', event.data?.result)
+      },
+      onVad: (event) => {
+        console.log('VAD:', event.type, event.confidence)
+      },
+      onError: (error) => {
+        console.error('Error:', error)
+      }
+    }
+  )
+  ```
+</Step>
+
+<Step title="Start/stop transcription">
+  ```typescript
+  // Start recording and transcribing
+  await transcriber.start()
+  
+  // Stop transcription
+  await transcriber.stop()
+  ```
+</Step>
+
+</Steps>
+
+## Constructor Signature
+
+```typescript
+const transcriber = new RealtimeTranscriber(
+  dependencies: RealtimeTranscriberDependencies,
+  options?: RealtimeOptions,
+  callbacks?: RealtimeTranscriberCallbacks
+)
+```
+
+### Dependencies
+
+```typescript
+type RealtimeTranscriberDependencies = {
+  whisperContext: WhisperContext       // Required
+  vadContext?: WhisperVadContext       // Optional - enables VAD features
+  audioStream: AudioStreamInterface    // Required - audio source
+  fs?: WavFileWriterFs                 // Optional - for WAV output
+}
+```
+
+### Options
+
+```typescript
+type RealtimeOptions = {
+  // Audio settings
+  audioSliceSec?: number              // Slice duration (default: 30)
+  audioMinSec?: number                // Min audio before transcribe (default: 1)
+  maxSlicesInMemory?: number          // Circular buffer size (default: 3)
+  
+  // Transcription
+  transcribeOptions?: TranscribeOptions
+  
+  // Prompting
+  initialPrompt?: string              // Initial prompt for first transcription
+  promptPreviousSlices?: boolean      // Chain previous results (default: true)
+  
+  // File output
+  audioOutputPath?: string            // Save audio to WAV file
+  
+  // Audio stream config
+  audioStreamConfig?: {
+    sampleRate?: number               // Default: 16000
+    channels?: number                 // Default: 1
+    bitsPerSample?: number            // Default: 16
+    bufferSize?: number               // Default: 16384
+    audioSource?: number              // Android audio source (default: 6)
+  }
+  
+  // Timing
+  realtimeProcessingPauseMs?: number  // Throttle realtime updates (default: 200)
+  initRealtimeAfterMs?: number        // Wait before first update (default: 200)
+  
+  // Logging
+  logger?: (message: string) => void  // Custom logger
+}
+```
+
+### Callbacks
+
+```typescript
+type RealtimeTranscriberCallbacks = {
+  onTranscribe?: (event: RealtimeTranscribeEvent) => void
+  onVad?: (event: RealtimeVadEvent) => void
+  onBeginTranscribe?: (sliceInfo) => Promise<boolean>  // Filter transcriptions
+  onBeginVad?: (sliceInfo) => Promise<boolean>         // Filter VAD
+  onError?: (error: string) => void
+  onStatusChange?: (isActive: boolean) => void
+  onStatsUpdate?: (event: RealtimeStatsEvent) => void
+  onSliceTranscriptionStabilized?: (text: string) => void
+}
+```
+
+## Events
+
+### Transcription Events
+
+```typescript
+type RealtimeTranscribeEvent = {
+  type: 'start' | 'transcribe' | 'end' | 'error'
+  sliceIndex: number
+  data?: TranscribeResult            // Transcription result
+  isCapturing: boolean               // Is audio still recording
+  processTime: number                // Processing time in ms
+  recordingTime: number              // Audio duration in ms
+  memoryUsage?: {
+    slicesInMemory: number
+    totalSamples: number
+    estimatedMB: number
+  }
+  vadEvent?: RealtimeVadEvent        // Associated VAD event
+}
+```
+
+### VAD Events
+
+```typescript
+type RealtimeVadEvent = {
+  type: 'speech_start' | 'speech_continue' | 'speech_end' | 'silence'
+  timestamp: number
+  lastSpeechDetectedTime: number
+  confidence: number                 // 0.0-1.0
+  duration: number                   // Segment duration in seconds
+  sliceIndex: number
+}
+```
+
+## VAD Integration
+
+When a VAD context is provided, RealtimeTranscriber automatically:
+
+1. **Detects speech segments** - Triggers transcription only during speech
+2. **Auto-slices on speech end** - Finalizes slice when speaker stops
+3. **Filters silence** - Avoids transcribing background noise
+
+### VAD Presets
+
+Use predefined VAD configurations:
+
+```typescript
+import { RingBufferVad, VAD_PRESETS } from 'whisper.rn/realtime-transcription'
+
+const vadContext = new RingBufferVad(
+  await initWhisperVad({ filePath: vadModelPath }),
+  VAD_PRESETS['sensitive']  // or 'default', 'conservative', 'noisy', etc.
+)
+
+const transcriber = new RealtimeTranscriber(
+  { whisperContext, vadContext, audioStream },
+  options,
+  callbacks
+)
+```
+
+**Available presets:**
+- `default` - Balanced (threshold: 0.5)
+- `sensitive` - Quiet environments (threshold: 0.3)
+- `very-sensitive` - Catches whispers (threshold: 0.2)
+- `conservative` - Clear speech only (threshold: 0.7)
+- `very-conservative` - Very clear speech (threshold: 0.8)
+- `continuous` - Lectures/presentations (60s max segments)
+- `meeting` - Multi-speaker (45s max segments)
+- `noisy` - Noisy environments (threshold: 0.75)
+
+See [Voice Activity Detection](/features/voice-activity-detection) for preset details.
+
+### Dynamic VAD Updates
+
+```typescript
+// Update VAD options during transcription
+transcriber.updateVadOptions({
+  threshold: 0.6,
+  minSpeechDurationMs: 300
+})
+```
+
+## Slice Management
+
+RealtimeTranscriber uses a **circular buffer** strategy:
+
+1. Audio is accumulated into slices (default: 30 seconds each)
+2. When a slice reaches capacity, it's finalized and transcribed
+3. Only the most recent slices are kept in memory (default: 3)
+4. Old slices are automatically released to prevent memory growth
+
+```typescript
+// Get current statistics
+const stats = transcriber.getStatistics()
+console.log('Slices in memory:', stats.sliceStats.slicesInMemory)
+console.log('Memory usage:', stats.sliceStats.memoryUsage.estimatedMB, 'MB')
+```
+
+### Force Next Slice
+
+Manually finalize the current slice:
+
+```typescript
+await transcriber.nextSlice()
+```
+
+This is useful for:
+- Ending a recording session cleanly
+- Creating manual boundaries in transcription
+
+## Prompt Chaining
+
+When `promptPreviousSlices: true` (default), each transcription includes:
+
+1. **Initial prompt** (if provided)
+2. **Results from previous slices** - Maintains context across slices
+
+```typescript
+const transcriber = new RealtimeTranscriber(
+  dependencies,
+  {
+    initialPrompt: 'Medical consultation:',
+    promptPreviousSlices: true  // Chain previous results
+  },
+  callbacks
+)
+```
+
+This improves continuity and consistency in longer transcriptions.
+
+## File Recording
+
+Save the audio stream to a WAV file:
+
+```typescript
+import RNFS from 'react-native-fs'
+
+const transcriber = new RealtimeTranscriber(
+  {
+    whisperContext,
+    vadContext,
+    audioStream,
+    fs: RNFS  // Provide filesystem module
+  },
+  {
+    audioOutputPath: `${RNFS.DocumentDirectoryPath}/recording.wav`
+  },
+  callbacks
+)
+
+await transcriber.start()  // Recording starts
+// ...
+await transcriber.stop()   // WAV file is finalized
+```
+
+<Tip>
+  The WAV file includes the complete audio stream from start to stop.
+</Tip>
+
+## Custom Audio Adapters
+
+Implement `AudioStreamInterface` for custom audio sources:
+
+```typescript
+interface AudioStreamInterface {
+  initialize(config: AudioStreamConfig): Promise<void>
+  start(): Promise<void>
+  stop(): Promise<void>
+  isRecording(): boolean
+  onData(callback: (data: AudioStreamData) => void): void
+  onError(callback: (error: string) => void): void
+  onStatusChange(callback: (isRecording: boolean) => void): void
+  onEnd?(callback: () => void): void
+  release(): Promise<void>
+}
+```
+
+**Example:** File simulation adapter
+
+```typescript
+import { SimulateFileAudioStreamAdapter } from 'whisper.rn/realtime-transcription/adapters'
+
+const audioStream = new SimulateFileAudioStreamAdapter(
+  '/path/to/audio.wav',
+  { playbackSpeed: 1.0 }  // Simulate real-time playback
+)
+```
+
+See the [example app](https://github.com/mybigday/whisper.rn/blob/main/example/src/RealtimeTranscriber.tsx) for a complete implementation.
+
+## Complete Example
+
+```typescript
+import { initWhisper, initWhisperVad } from 'whisper.rn'
+import { 
+  RealtimeTranscriber,
+  RingBufferVad,
+  VAD_PRESETS 
+} from 'whisper.rn/realtime-transcription'
+import { AudioPcmStreamAdapter } from 'whisper.rn/realtime-transcription/adapters'
+import RNFS from 'react-native-fs'
+
+// Initialize
+const whisperContext = await initWhisper({
+  filePath: require('./assets/ggml-base.bin')
+})
+
+const vadContext = new RingBufferVad(
+  await initWhisperVad({
+    filePath: require('./assets/ggml-silero-v6.2.0.bin')
+  }),
+  VAD_PRESETS['default']
+)
+
+const audioStream = new AudioPcmStreamAdapter()
+
+// Create transcriber
+const transcriber = new RealtimeTranscriber(
+  { whisperContext, vadContext, audioStream, fs: RNFS },
+  {
+    audioSliceSec: 30,
+    maxSlicesInMemory: 3,
+    transcribeOptions: { language: 'en' },
+    initialPrompt: 'Conversation:',
+    audioOutputPath: `${RNFS.DocumentDirectoryPath}/recording.wav`
+  },
+  {
+    onTranscribe: (event) => {
+      if (event.type === 'transcribe' && event.data) {
+        console.log('Result:', event.data.result)
+        console.log('Process time:', event.processTime, 'ms')
+      }
+    },
+    onVad: (event) => {
+      console.log('VAD:', event.type, 'confidence:', event.confidence)
+    },
+    onSliceTranscriptionStabilized: (text) => {
+      console.log('Stabilized text:', text)
+    },
+    onError: (error) => {
+      console.error('Error:', error)
+    }
+  }
+)
+
+// Start/stop
+await transcriber.start()
+// ... transcription happens automatically ...
+await transcriber.stop()
+
+// Cleanup
+await transcriber.release()
+```
+
+## Memory Management
+
+```typescript
+// Release transcriber and all resources
+await transcriber.release()
+```
+
+This releases:
+- Audio stream resources
+- VAD context (if provided)
+- Slice buffers
+- WAV file writer
+
+<Warning>
+  Always call `release()` when done to prevent memory leaks.
+</Warning>
+
+## Performance Tips
+
+1. **Use VAD** - Reduces unnecessary transcriptions of silence
+2. **Tune slice duration** - Shorter slices = more frequent updates, longer slices = better context
+3. **Limit slices in memory** - Default (3) is optimal for most cases
+4. **Enable GPU/Core ML** - Set in `initWhisper()` options
+5. **Adjust throttling** - `realtimeProcessingPauseMs` controls update frequency
+
+## Troubleshooting
+
+### "JSI binding not installed"
+
+Ensure `initWhisper()` is called before creating `RealtimeTranscriber`.
+
+### No transcription events
+
+Check:
+- Microphone permissions are granted
+- VAD settings aren't too strict (try `threshold: 0.3`)
+- Audio stream is receiving data
+
+### High memory usage
+
+Reduce `maxSlicesInMemory` or `audioSliceSec`.
+
+## See Also
+
+- [Voice Activity Detection](/features/voice-activity-detection) - VAD presets and options
+- [File Transcription](/features/transcription) - Transcription options
+- [Example App](https://github.com/mybigday/whisper.rn/blob/main/example/src/RealtimeTranscriber.tsx) - Complete implementation

@@ -1,0 +1,98 @@
+---
+title: TranscribeResult
+description: Result object returned from Whisper transcription operations
+---
+
+Interface representing the transcription result returned by `transcribe()`, `transcribeData()`, and realtime transcription methods.
+
+## Properties
+
+<ResponseField name="result" type="string" required>
+  The complete transcribed text. Contains the full transcription result as a single string.
+</ResponseField>
+
+<ResponseField name="language" type="string" required>
+  The detected or specified language code (e.g., 'en', 'es', 'fr'). If language was set to 'auto' in options, this will be the detected language.
+</ResponseField>
+
+<ResponseField name="segments" type="array" required>
+  Array of transcription segments with timestamps. Each segment represents a portion of the transcribed audio.
+  
+  <Expandable title="Segment Properties">
+    <ResponseField name="text" type="string" required>
+      The transcribed text for this segment.
+    </ResponseField>
+    
+    <ResponseField name="t0" type="number" required>
+      Start timestamp in milliseconds. Indicates when this segment begins in the audio.
+    </ResponseField>
+    
+    <ResponseField name="t1" type="number" required>
+      End timestamp in milliseconds. Indicates when this segment ends in the audio.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="isAborted" type="boolean" required>
+  Whether the transcription was aborted by calling `stop()`. When `true`, the transcription was cancelled before completion.
+</ResponseField>
+
+## Usage Example
+
+```typescript
+import { initWhisper } from 'whisper.rn'
+
+const context = await initWhisper({
+  filePath: 'path/to/model.bin'
+})
+
+const { promise } = context.transcribe('path/to/audio.wav', {
+  language: 'en'
+})
+
+const result: TranscribeResult = await promise
+
+console.log('Full text:', result.result)
+console.log('Language:', result.language)
+console.log('Was aborted:', result.isAborted)
+
+// Process segments with timestamps
+result.segments.forEach(segment => {
+  console.log(`[${segment.t0}ms - ${segment.t1}ms]: ${segment.text}`)
+})
+```
+
+## Example Response
+
+```json
+{
+  "result": "Hello, this is a test transcription.",
+  "language": "en",
+  "isAborted": false,
+  "segments": [
+    {
+      "text": "Hello, this is a test",
+      "t0": 0,
+      "t1": 1500
+    },
+    {
+      "text": " transcription.",
+      "t0": 1500,
+      "t1": 2800
+    }
+  ]
+}
+```
+
+## Notes
+
+- Timestamps are in milliseconds, not seconds
+- Segments may overlap slightly depending on the model's processing
+- When `isAborted` is `true`, the `result` and `segments` may be partial or empty
+- The `language` field uses ISO 639-1 language codes
+
+## Related
+
+- [TranscribeOptions](/api-reference/types/transcribe-options) - Configuration options for transcription
+- [transcribe()](/api-reference/whisper-context#transcribe) - Transcribe audio files
+- [transcribeData()](/api-reference/whisper-context#transcribedata) - Transcribe audio data

@@ -1,0 +1,538 @@
+---
+title: 'File Handling'
+description: 'Working with different audio formats and data sources'
+icon: 'file'
+---
+
+whisper.rn supports multiple audio input formats: file paths, bundled assets, URLs, base64-encoded data, and ArrayBuffers. This guide shows you how to work with each format.
+
+## Supported Input Formats
+
+whisper.rn accepts audio in the following formats:
+
+<CardGroup cols={2}>
+  <Card title="File Paths" icon="folder">
+    Local file system paths (e.g., recorded audio)
+  </Card>
+  <Card title="Assets" icon="box">
+    Bundled app assets via `require()`
+  </Card>
+  <Card title="URLs" icon="globe">
+    Remote audio files via HTTP/HTTPS
+  </Card>
+  <Card title="Base64" icon="code">
+    Base64-encoded WAV or PCM data
+  </Card>
+  <Card title="ArrayBuffer" icon="memory">
+    Raw PCM data via JSI (high performance)
+  </Card>
+</CardGroup>
+
+## File Paths
+
+Transcribe audio files from the device file system:
+
+```typescript
+import RNFS from 'react-native-fs';
+import { initWhisper } from 'whisper.rn';
+
+const context = await initWhisper({
+  filePath: require('../assets/ggml-base.bin'),
+});
+
+// Transcribe a local file
+const audioPath = `${RNFS.DocumentDirectoryPath}/recording.wav`;
+const { promise } = context.transcribe(audioPath, {
+  language: 'en',
+});
+
+const { result } = await promise;
+console.log('Result:', result);
+```
+
+## Bundled Assets
+
+Use audio files bundled with your app:
+
+<Steps>
+  <Step title="Add to Metro Config">
+    First, configure Metro to bundle audio files:
+
+    ```javascript metro.config.js
+    const { getDefaultConfig } = require('@react-native/metro-config');
+
+    module.exports = (async () => {
+      const defaultConfig = await getDefaultConfig(__dirname);
+      return {
+        ...defaultConfig,
+        resolver: {
+          ...defaultConfig.resolver,
+          assetExts: [
+            ...defaultConfig.resolver.assetExts,
+            'bin',  // For model files
+            'mil',  // For Core ML files
+            'wav',  // For audio files
+            'mp3',  // For MP3 files
+          ],
+        },
+      };
+    })();
+    ```
+  </Step>
+
+  <Step title="Require and Transcribe">
+    Use `require()` to reference bundled assets:
+
+    ```typescript
+    const sampleAudio = require('../assets/jfk.wav');
+
+    const { promise } = context.transcribe(sampleAudio, {
+      language: 'en',
+    });
+
+    const { result } = await promise;
+    console.log('Result:', result);
+    ```
+  </Step>
+</Steps>
+
+<Tip>
+  The maximum asset size in React Native is 2GB. For larger models, download them at runtime instead.
+</Tip>
+
+## Remote URLs
+
+Transcribe audio files from URLs:
+
+```typescript
+import RNFS from 'react-native-fs';
+
+const audioUrl = 'https://example.com/audio.wav';
+const localPath = `${RNFS.DocumentDirectoryPath}/downloaded-audio.wav`;
+
+// Download the file first
+await RNFS.downloadFile({
+  fromUrl: audioUrl,
+  toFile: localPath,
+  progress: (res) => {
+    const progress = (res.bytesWritten / res.contentLength) * 100;
+    console.log(`Download: ${progress.toFixed(1)}%`);
+  },
+}).promise;
+
+// Transcribe downloaded file
+const { promise } = context.transcribe(localPath, {
+  language: 'en',
+});
+
+const { result } = await promise;
+console.log('Result:', result);
+```
+
+## Base64 WAV Data
+
+Transcribe base64-encoded WAV files using `transcribeData()`:
+
+```typescript
+import { Buffer } from 'buffer';
+import RNFS from 'react-native-fs';
+
+// Read WAV file as base64
+const wavFilePath = `${RNFS.DocumentDirectoryPath}/recording.wav`;
+const base64Data = await RNFS.readFile(wavFilePath, 'base64');
+
+// Transcribe base64 data
+const { promise } = context.transcribeData(base64Data, {
+  language: 'en',
+  onProgress: (progress) => {
+    console.log(`Progress: ${progress}%`);
+  },
+});
+
+const { result } = await promise;
+console.log('Result:', result);
+```
+
+## Raw PCM Data
+
+Transcribe raw PCM audio data (16kHz, mono, 16-bit):
+
+### Recording to PCM
+
+```typescript
+import LiveAudioStream from '@fugood/react-native-audio-pcm-stream';
+import { Buffer } from 'buffer';
+
+const audioOptions = {
+  sampleRate: 16000,
+  channels: 1,
+  bitsPerSample: 16,
+  audioSource: 6,
+  bufferSize: 16 * 1024,
+};
+
+let recordedData: Uint8Array | null = null;
+
+// Initialize and start recording
+LiveAudioStream.init(audioOptions);
+LiveAudioStream.on('data', (data: string) => {
+  const newData = new Uint8Array(Buffer.from(data, 'base64'));
+  if (!recordedData) {
+    recordedData = newData;
+  } else {
+    // Concatenate audio chunks
+    const combined = new Uint8Array(recordedData.length + newData.length);
+    combined.set(recordedData);
+    combined.set(newData, recordedData.length);
+    recordedData = combined;
+  }
+});
+
+LiveAudioStream.start();
+
+// Later, stop recording
+await LiveAudioStream.stop();
+
+if (recordedData) {
+  // Convert to base64 for transcription
+  const base64Data = Buffer.from(recordedData).toString('base64');
+  
+  const { promise } = context.transcribeData(base64Data, {
+    language: 'en',
+  });
+  
+  const { result } = await promise;
+  console.log('Transcription:', result);
+}
+```
+
+### Saving PCM as WAV
+
+Use the `WavFileWriter` utility to save PCM data as WAV files:
+
+```typescript
+import RNFS from 'react-native-fs';
+import { WavFileWriter } from 'whisper.rn/utils/WavFileWriter';
+
+const recordFilePath = `${RNFS.DocumentDirectoryPath}/recording.wav`;
+
+const audioOptions = {
+  sampleRate: 16000,
+  channels: 1,
+  bitsPerSample: 16,
+};
+
+// Create WAV file writer
+const wavWriter = new WavFileWriter(RNFS, recordFilePath, audioOptions);
+await wavWriter.initialize();
+
+// Append PCM data
+await wavWriter.appendAudioData(recordedData);
+
+// Finalize WAV file
+await wavWriter.finalize();
+
+console.log('WAV file saved:', recordFilePath);
+
+// Now transcribe the WAV file
+const { promise } = context.transcribe(recordFilePath, {
+  language: 'en',
+});
+
+const { result } = await promise;
+console.log('Result:', result);
+```
+
+## ArrayBuffer (High Performance)
+
+For maximum performance, use ArrayBuffer via JSI bindings:
+
+```typescript
+import { Buffer } from 'buffer';
+
+// Your PCM audio data
+const pcmData = new Uint8Array(/* ... */);
+
+// Convert to base64 (JSI handles conversion internally)
+const base64Data = Buffer.from(pcmData).toString('base64');
+
+// Use transcribeData - JSI optimizes ArrayBuffer transfers
+const { promise } = context.transcribeData(base64Data, {
+  language: 'en',
+});
+
+const { result } = await promise;
+console.log('Result:', result);
+```
+
+<Tip>
+  `transcribeData()` uses JSI bindings for efficient memory transfer, avoiding JSON serialization overhead.
+</Tip>
+
+## Audio Format Requirements
+
+For best results, ensure your audio meets these requirements:
+
+<CardGroup cols={2}>
+  <Card title="Sample Rate" icon="waveform">
+    **16kHz** (required by Whisper model)
+  </Card>
+  <Card title="Channels" icon="signal">
+    **Mono (1 channel)** - stereo will be converted
+  </Card>
+  <Card title="Bit Depth" icon="binary">
+    **16-bit PCM** (signed integer)
+  </Card>
+  <Card title="Format" icon="file-audio">
+    **WAV** for files, **PCM** for raw data
+  </Card>
+</CardGroup>
+
+## Complete Recording Example
+
+Here's a complete example showing recording and transcription:
+
+```typescript Complete Recording Example
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { View, Text, Button, ScrollView } from 'react-native';
+import RNFS from 'react-native-fs';
+import LiveAudioStream from '@fugood/react-native-audio-pcm-stream';
+import { Buffer } from 'buffer';
+import { initWhisper } from 'whisper.rn';
+import type { WhisperContext } from 'whisper.rn';
+import { WavFileWriter } from 'whisper.rn/utils/WavFileWriter';
+
+const recordFile = `${RNFS.DocumentDirectoryPath}/recording.wav`;
+
+const audioOptions = {
+  sampleRate: 16000,
+  channels: 1,
+  bitsPerSample: 16,
+  audioSource: 6,
+  wavFile: recordFile,
+  bufferSize: 16 * 1024,
+};
+
+export default function RecordAndTranscribe() {
+  const contextRef = useRef<WhisperContext | null>(null);
+  const recordedDataRef = useRef<Uint8Array | null>(null);
+  
+  const [logs, setLogs] = useState<string[]>([]);
+  const [result, setResult] = useState<string | null>(null);
+  const [isRecording, setIsRecording] = useState(false);
+
+  const log = useCallback((...messages: any[]) => {
+    setLogs((prev) => [...prev, messages.join(' ')]);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      contextRef.current?.release();
+    };
+  }, []);
+
+  const initialize = async () => {
+    log('Initializing context...');
+    const ctx = await initWhisper({
+      filePath: require('../assets/ggml-base.bin'),
+    });
+    contextRef.current = ctx;
+    log('Context initialized');
+  };
+
+  const startRecording = async () => {
+    try {
+      recordedDataRef.current = null;
+
+      LiveAudioStream.init(audioOptions);
+      LiveAudioStream.on('data', (data: string) => {
+        const newData = new Uint8Array(Buffer.from(data, 'base64'));
+        if (!recordedDataRef.current) {
+          recordedDataRef.current = newData;
+        } else {
+          const combined = new Uint8Array(
+            recordedDataRef.current.length + newData.length
+          );
+          combined.set(recordedDataRef.current);
+          combined.set(newData, recordedDataRef.current.length);
+          recordedDataRef.current = combined;
+        }
+      });
+
+      LiveAudioStream.start();
+      setIsRecording(true);
+      log('Recording started...');
+    } catch (error) {
+      log('Error starting recording:', error);
+    }
+  };
+
+  const stopRecording = async () => {
+    try {
+      await LiveAudioStream.stop();
+      setIsRecording(false);
+      log('Recording stopped');
+
+      if (!recordedDataRef.current) {
+        log('No recorded data');
+        return;
+      }
+      if (!contextRef.current) {
+        log('Context not initialized');
+        return;
+      }
+
+      // Save as WAV file
+      const wavWriter = new WavFileWriter(RNFS, recordFile, audioOptions);
+      await wavWriter.initialize();
+      await wavWriter.appendAudioData(recordedDataRef.current);
+      await wavWriter.finalize();
+      log(`Saved ${recordedDataRef.current.length} bytes as WAV`);
+
+      // Transcribe using base64 data
+      const base64Data = Buffer.from(recordedDataRef.current).toString('base64');
+      log('Starting transcription...');
+
+      const startTime = Date.now();
+      const { promise } = contextRef.current.transcribeData(base64Data, {
+        language: 'en',
+        onProgress: (progress) => {
+          log(`Progress: ${progress}%`);
+        },
+      });
+
+      const { result } = await promise;
+      const endTime = Date.now();
+
+      setResult(
+        `Result: ${result}\n` +
+        `Transcribed in ${endTime - startTime}ms`
+      );
+      log('Transcription complete');
+    } catch (error) {
+      log('Error:', error);
+    }
+  };
+
+  return (
+    <ScrollView style={{ padding: 20 }}>
+      <Button title="Initialize" onPress={initialize} />
+      
+      <View style={{ marginTop: 10 }}>
+        <Button
+          title={isRecording ? 'Stop Recording' : 'Start Recording'}
+          onPress={isRecording ? stopRecording : startRecording}
+          disabled={!contextRef.current}
+        />
+      </View>
+
+      <View style={{ marginTop: 20 }}>
+        <Text>Logs:</Text>
+        {logs.map((log, i) => (
+          <Text key={i}>{log}</Text>
+        ))}
+      </View>
+
+      {result && (
+        <View style={{ marginTop: 20 }}>
+          <Text>Result:</Text>
+          <Text>{result}</Text>
+        </View>
+      )}
+    </ScrollView>
+  );
+}
+```
+
+## Model File Handling
+
+Model files can also be handled in different ways:
+
+<Tabs>
+  <Tab title="Bundled Asset">
+    ```typescript
+    const context = await initWhisper({
+      filePath: require('../assets/ggml-base.bin'),
+    });
+    ```
+    
+    **Pros**: No download required  
+    **Cons**: Increases app bundle size
+  </Tab>
+  
+  <Tab title="Downloaded">
+    ```typescript
+    import RNFS from 'react-native-fs';
+
+    const modelUrl = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin';
+    const modelPath = `${RNFS.DocumentDirectoryPath}/ggml-base.bin`;
+
+    // Check if already downloaded
+    if (!(await RNFS.exists(modelPath))) {
+      await RNFS.downloadFile({
+        fromUrl: modelUrl,
+        toFile: modelPath,
+      }).promise;
+    }
+
+    const context = await initWhisper({ filePath: modelPath });
+    ```
+    
+    **Pros**: Smaller app bundle  
+    **Cons**: Requires internet on first run
+  </Tab>
+  
+  <Tab title="Core ML (iOS)">
+    ```typescript
+    // Place .mlmodelc directory next to model file:
+    // - ggml-tiny.en.bin
+    // - ggml-tiny.en-encoder.mlmodelc/
+    //   - model.mil
+    //   - coremldata.bin
+    //   - weights/weight.bin
+
+    const context = await initWhisper({
+      filePath: require('../assets/ggml-tiny.en.bin'),
+      useCoreMLIos: true, // Enable Core ML acceleration
+    });
+    ```
+    
+    **Pros**: 2-3x faster on iOS  
+    **Cons**: Larger file size, iOS only
+  </Tab>
+</Tabs>
+
+## Performance Tips
+
+<Tip>
+  **Audio Format**: Always use 16kHz mono audio. Converting from other formats adds processing overhead.
+</Tip>
+
+<Tip>
+  **File Size**: For base64 data, be aware that encoding increases size by ~33%. Use file paths when possible.
+</Tip>
+
+<Tip>
+  **JSI Optimization**: `transcribeData()` uses JSI bindings for efficient ArrayBuffer transfers without JSON serialization.
+</Tip>
+
+<Tip>
+  **Model Caching**: Download models once and cache them. Check if files exist before downloading.
+</Tip>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Basic Transcription" icon="file-audio" href="/examples/basic-transcription">
+    Learn basic transcription workflows
+  </Card>
+  <Card title="Realtime Streaming" icon="microphone" href="/examples/realtime-streaming">
+    Implement live transcription
+  </Card>
+  <Card title="VAD Detection" icon="waveform-lines" href="/examples/vad-detection">
+    Detect speech in audio files
+  </Card>
+  <Card title="API Reference" icon="code" href="/api-reference/whisper-context">
+    Full API documentation
+  </Card>
+</CardGroup>

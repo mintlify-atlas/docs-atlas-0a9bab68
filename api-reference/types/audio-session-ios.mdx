@@ -1,0 +1,222 @@
+---
+title: Audio Session Types (iOS)
+description: iOS audio session configuration types for controlling audio behavior
+---
+
+Types for configuring iOS audio session settings. These are used when controlling audio behavior during transcription, particularly with realtime transcription.
+
+<Note>
+  These types are iOS-only and will have no effect on Android.
+</Note>
+
+## AudioSessionCategoryIos
+
+Enum defining iOS audio session categories. Based on [AVAudioSessionCategory](https://developer.apple.com/documentation/avfaudio/avaudiosessioncategory).
+
+<ParamField path="Ambient" type="enum">
+  Mix with other audio. Audio continues even when the device is locked or the silent switch is on.
+</ParamField>
+
+<ParamField path="SoloAmbient" type="enum">
+  Default category. Silences other audio but allows playback when device is unlocked.
+</ParamField>
+
+<ParamField path="Playback" type="enum">
+  For playing recorded audio or other media. Silences other audio.
+</ParamField>
+
+<ParamField path="Record" type="enum">
+  For recording audio only. Silences playback audio.
+</ParamField>
+
+<ParamField path="PlayAndRecord" type="enum">
+  For simultaneous recording and playback. Common for VoIP and voice chat apps.
+</ParamField>
+
+<ParamField path="MultiRoute" type="enum">
+  For routing audio to multiple outputs simultaneously (e.g., USB and HDMI).
+</ParamField>
+
+## AudioSessionCategoryOptionIos
+
+Enum defining iOS audio session category options. Based on [AVAudioSessionCategoryOptions](https://developer.apple.com/documentation/avfaudio/avaudiosessioncategoryoptions).
+
+<ParamField path="MixWithOthers" type="enum">
+  Allow audio from this session to mix with audio from other apps.
+</ParamField>
+
+<ParamField path="DuckOthers" type="enum">
+  Lower the volume of other audio sessions while this session is active.
+</ParamField>
+
+<ParamField path="InterruptSpokenAudioAndMixWithOthers" type="enum">
+  Interrupt spoken audio content (like podcasts) but mix with other audio.
+</ParamField>
+
+<ParamField path="AllowBluetooth" type="enum">
+  Allow Bluetooth hands-free devices to appear as available input routes.
+</ParamField>
+
+<ParamField path="AllowBluetoothA2DP" type="enum">
+  Allow Bluetooth A2DP devices to appear as available output routes.
+</ParamField>
+
+<ParamField path="AllowAirPlay" type="enum">
+  Allow AirPlay devices to appear as available output routes.
+</ParamField>
+
+<ParamField path="DefaultToSpeaker" type="enum">
+  Route audio to the built-in speaker instead of the receiver.
+</ParamField>
+
+## AudioSessionModeIos
+
+Enum defining iOS audio session modes. Based on [AVAudioSessionMode](https://developer.apple.com/documentation/avfaudio/avaudiosessionmode).
+
+<ParamField path="Default" type="enum">
+  Default audio session mode.
+</ParamField>
+
+<ParamField path="VoiceChat" type="enum">
+  Optimized for two-way voice communication (e.g., VoIP).
+</ParamField>
+
+<ParamField path="VideoChat" type="enum">
+  Optimized for video chat applications.
+</ParamField>
+
+<ParamField path="GameChat" type="enum">
+  Optimized for in-game voice chat.
+</ParamField>
+
+<ParamField path="VideoRecording" type="enum">
+  Optimized for recording video with audio.
+</ParamField>
+
+<ParamField path="Measurement" type="enum">
+  For audio input/output measurements. Minimizes system audio processing.
+</ParamField>
+
+<ParamField path="MoviePlayback" type="enum">
+  Optimized for playing back video content.
+</ParamField>
+
+<ParamField path="SpokenAudio" type="enum">
+  For spoken audio content like podcasts or audiobooks.
+</ParamField>
+
+## AudioSessionSettingIos
+
+Interface combining audio session configuration properties.
+
+<ParamField path="category" type="AudioSessionCategoryIos" required>
+  The audio session category.
+</ParamField>
+
+<ParamField path="options" type="AudioSessionCategoryOptionIos[]">
+  Array of category options to apply.
+</ParamField>
+
+<ParamField path="mode" type="AudioSessionModeIos">
+  The audio session mode.
+</ParamField>
+
+<ParamField path="active" type="boolean">
+  Whether to activate the audio session.
+</ParamField>
+
+## Usage Example
+
+### With Realtime Transcription
+
+```typescript
+import { 
+  AudioSessionCategoryIos,
+  AudioSessionCategoryOptionIos,
+  AudioSessionModeIos 
+} from 'whisper.rn'
+
+const options = {
+  language: 'en',
+  audioSessionOnStartIos: {
+    category: AudioSessionCategoryIos.PlayAndRecord,
+    options: [
+      AudioSessionCategoryOptionIos.DefaultToSpeaker,
+      AudioSessionCategoryOptionIos.AllowBluetooth
+    ],
+    mode: AudioSessionModeIos.VoiceChat,
+    active: true
+  },
+  audioSessionOnStopIos: 'restore' // Restore previous audio session
+}
+
+const { promise, stop } = await context.transcribeRealtime(options)
+```
+
+### Manual Audio Session Control
+
+```typescript
+import { AudioSessionIos } from 'whisper.rn'
+
+// Set category with options
+await AudioSessionIos.setCategory(
+  AudioSessionCategoryIos.Record,
+  [AudioSessionCategoryOptionIos.AllowBluetooth]
+)
+
+// Set mode
+await AudioSessionIos.setMode(AudioSessionModeIos.VoiceChat)
+
+// Activate
+await AudioSessionIos.setActive(true)
+
+// Get current settings
+const category = await AudioSessionIos.getCurrentCategory()
+const mode = await AudioSessionIos.getCurrentMode()
+```
+
+## Common Configurations
+
+### Voice Recording
+```typescript
+{
+  category: AudioSessionCategoryIos.Record,
+  mode: AudioSessionModeIos.VoiceChat,
+  active: true
+}
+```
+
+### VoIP Application
+```typescript
+{
+  category: AudioSessionCategoryIos.PlayAndRecord,
+  options: [
+    AudioSessionCategoryOptionIos.DefaultToSpeaker,
+    AudioSessionCategoryOptionIos.AllowBluetooth
+  ],
+  mode: AudioSessionModeIos.VoiceChat,
+  active: true
+}
+```
+
+### Background Audio Mixing
+```typescript
+{
+  category: AudioSessionCategoryIos.Playback,
+  options: [AudioSessionCategoryOptionIos.MixWithOthers],
+  mode: AudioSessionModeIos.SpokenAudio,
+  active: true
+}
+```
+
+## Notes
+
+- Audio session changes only affect iOS devices
+- Use `'restore'` for `audioSessionOnStopIos` to automatically restore the previous state
+- The `AudioSessionIos` utility is deprecated - prefer using `audioSessionOnStartIos`/`audioSessionOnStopIos` options
+- Changing audio session settings may require microphone permissions
+
+## Related
+
+- [RealtimeTranscriber](/api-reference/realtime-transcriber) - Modern realtime transcription API
+- [transcribeRealtime()](/api-reference/whisper-context#transcriberealtime) - Deprecated realtime transcription method

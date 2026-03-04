@@ -1,0 +1,511 @@
+---
+title: "Memory Management"
+description: "Manage audio slices and memory usage in realtime transcription"
+---
+
+## Overview
+
+Realtime transcription requires careful memory management to prevent out-of-memory errors during long recording sessions. The `SliceManager` class implements a circular buffer strategy that automatically manages audio slices, keeping only recent data in memory.
+
+## Memory Architecture
+
+### Audio Slices
+
+Audio is divided into fixed-duration **slices** (default: 30 seconds) that are:
+- Processed independently for transcription
+- Stored temporarily in memory
+- Released when no longer needed
+- Limited by `maxSlicesInMemory` configuration
+
+```
+Recording Timeline:
+[Slice 0: 0-30s] → [Slice 1: 30-60s] → [Slice 2: 60-90s] → ...
+
+maxSlicesInMemory = 3:
+Memory: [Slice 0] [Slice 1] [Slice 2]
+        ↓ New slice created (Slice 3)
+Memory: [Slice 1] [Slice 2] [Slice 3]  ← Slice 0 released
+```
+
+### Memory Lifecycle
+
+1. **Creation**: New slice allocated when audio data arrives
+2. **Population**: Audio chunks added until slice duration reached
+3. **Processing**: Slice sent to Whisper for transcription
+4. **Retention**: Kept in memory for context/prompt chaining
+5. **Release**: Removed when exceeding `maxSlicesInMemory`
+
+## SliceManager API
+
+The `SliceManager` class handles all slice lifecycle operations.
+
+### Constructor
+
+```typescript
+const sliceManager = new SliceManager(
+  sliceDurationSec,     // default: 30
+  maxSlicesInMemory,    // default: 1
+  sampleRate           // default: 16000
+)
+```
+
+<ParamField path="sliceDurationSec" type="number" default="30">
+  Duration of each audio slice in seconds. Matches Whisper's 30-second processing chunks.
+</ParamField>
+
+<ParamField path="maxSlicesInMemory" type="number" default="1">
+  Maximum number of slices to keep in memory. Older slices are released automatically.
+</ParamField>
+
+<ParamField path="sampleRate" type="number" default="16000">
+  Audio sample rate in Hz (Whisper requires 16kHz).
+</ParamField>
+
+### Adding Audio Data
+
+```typescript SliceManager.ts
+addAudioData(audioData: Uint8Array): { slice?: AudioSlice }
+```
+
+Appends audio data to the current slice. Automatically creates new slices when the current one is full.
+
+<ParamField path="audioData" type="Uint8Array" required>
+  Raw PCM audio data (16-bit, mono, 16kHz)
+</ParamField>
+
+<ResponseField name="slice" type="AudioSlice">
+  The current slice being populated (may be incomplete)
+</ResponseField>
+
+**Behavior:**
+- Accumulates data in the current slice
+- Creates new slice when duration reached (80% capacity threshold)
+- Triggers cleanup when `maxSlicesInMemory` exceeded
+- Returns the current slice object
+
+**Example:**
+```typescript
+const { slice } = sliceManager.addAudioData(audioChunk)
+console.log(`Slice ${slice?.index}: ${slice?.sampleCount} bytes`)
+```
+
+### Getting Slices for Transcription
+
+```typescript
+getSliceForTranscription(): AudioSlice | null
+```
+
+Retrieves the next unprocessed slice for transcription.
+
+<ResponseField name="slice" type="AudioSlice | null">
+  Next slice to transcribe, or `null` if none available
+</ResponseField>
+
+**Example:**
+```typescript
+const slice = sliceManager.getSliceForTranscription()
+if (slice) {
+  const result = await whisperContext.transcribeData(slice.data.buffer)
+  sliceManager.markSliceAsProcessed(slice.index)
+}
+```
+
+### Marking Slices as Processed
+
+```typescript
+markSliceAsProcessed(sliceIndex: number): void
+```
+
+Marks a slice as transcribed, preventing duplicate processing.
+
+<ParamField path="sliceIndex" type="number" required>
+  Index of the slice to mark
+</ParamField>
+
+### Moving to Next Slice
+
+```typescript
+moveToNextTranscribeSlice(): void
+```
+
+Advances the internal pointer to the next slice for transcription. Used in sequential processing.
+
+### Getting Slice Data
+
+```typescript
+getAudioDataForTranscription(sliceIndex: number): Uint8Array | null
+```
+
+Retrieves audio data for a specific slice.
+
+<ParamField path="sliceIndex" type="number" required>
+  Index of the slice to retrieve
+</ParamField>
+
+<ResponseField name="data" type="Uint8Array | null">
+  Raw PCM audio data, or `null` if slice not found or empty
+</ResponseField>
+
+### Getting Slice by Index
+
+```typescript
+getSliceByIndex(sliceIndex: number): AudioSlice | null
+```
+
+Retrieves complete slice metadata.
+
+<ResponseField name="slice" type="AudioSlice | null">
+  Slice object with full metadata
+</ResponseField>
+
+### Memory Usage Statistics
+
+```typescript SliceManager.ts
+getMemoryUsage(): MemoryUsage
+```
+
+Returns current memory usage metrics.
+
+<ResponseField name="MemoryUsage" type="object">
+  <Expandable title="properties">
+    <ResponseField name="slicesInMemory" type="number">
+      Number of active slices currently in memory
+    </ResponseField>
+    
+    <ResponseField name="totalSamples" type="number">
+      Total audio samples stored (bytes / 2)
+    </ResponseField>
+    
+    <ResponseField name="estimatedMB" type="number">
+      Estimated memory usage in megabytes (rounded to 2 decimals)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+**Example:**
+```typescript
+const usage = sliceManager.getMemoryUsage()
+console.log(`Memory: ${usage.estimatedMB} MB (${usage.slicesInMemory} slices)`)
+```
+
+### Forcing New Slice
+
+```typescript
+forceNextSlice(): { slice?: AudioSlice }
+```
+
+Finalizes the current slice immediately, regardless of capacity. Used for VAD-based slicing on speech_end events.
+
+<ResponseField name="slice" type="AudioSlice">
+  The finalized slice
+</ResponseField>
+
+**Use Case:**
+```typescript
+// VAD detected end of speech
+vadContext.onSpeechEnd(() => {
+  const { slice } = sliceManager.forceNextSlice()
+  // Transcribe this speech segment immediately
+})
+```
+
+### Current Slice Info
+
+```typescript
+getCurrentSliceInfo(): object
+```
+
+Returns comprehensive slice tracking information.
+
+<ResponseField name="info" type="object">
+  <Expandable title="properties">
+    <ResponseField name="currentSliceIndex" type="number">
+      Index of slice currently being populated
+    </ResponseField>
+    
+    <ResponseField name="transcribeSliceIndex" type="number">
+      Index of next slice to transcribe
+    </ResponseField>
+    
+    <ResponseField name="totalSlices" type="number">
+      Total number of slices in memory
+    </ResponseField>
+    
+    <ResponseField name="memoryUsage" type="MemoryUsage">
+      Current memory usage statistics
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Reset
+
+```typescript
+reset(): void
+```
+
+Releases all slices and resets internal state. Call when stopping transcription.
+
+**Example:**
+```typescript
+await transcriber.stop()
+sliceManager.reset() // Clean up memory
+```
+
+## AudioSlice Type
+
+Each slice contains metadata and audio data:
+
+```typescript types.ts
+export interface AudioSlice {
+  index: number           // Slice sequence number (0, 1, 2, ...)
+  data: Uint8Array       // Raw PCM audio data
+  sampleCount: number    // Number of bytes in data
+  startTime: number      // Creation timestamp (ms)
+  endTime: number        // Last update timestamp (ms)
+  isProcessed: boolean   // Has been transcribed
+  isReleased: boolean    // Memory has been freed
+}
+```
+
+## Memory Usage Patterns
+
+### Minimal Memory (Live Transcription)
+
+```typescript
+const transcriber = new RealtimeTranscriber(
+  { whisperContext, audioStream },
+  {
+    audioSliceSec: 30,
+    maxSlicesInMemory: 1,  // Keep only current slice
+    promptPreviousSlices: false,  // Don't chain prompts
+  }
+)
+```
+
+**Memory**: ~1 MB per slice (30s @ 16kHz mono)
+
+### Balanced (With Context)
+
+```typescript
+const transcriber = new RealtimeTranscriber(
+  { whisperContext, audioStream },
+  {
+    audioSliceSec: 30,
+    maxSlicesInMemory: 3,  // Keep last 3 slices
+    promptPreviousSlices: true,  // Chain for context
+  }
+)
+```
+
+**Memory**: ~3 MB (allows prompt chaining for better continuity)
+
+### Maximum Context (Long Sessions)
+
+```typescript
+const transcriber = new RealtimeTranscriber(
+  { whisperContext, audioStream },
+  {
+    audioSliceSec: 25,      // Slightly shorter slices
+    maxSlicesInMemory: 5,   // Keep more history
+    promptPreviousSlices: true,
+  }
+)
+```
+
+**Memory**: ~5 MB (better context but higher memory usage)
+
+## Context Release Best Practices
+
+### Releasing Whisper Context
+
+Whisper contexts hold model data in memory (100-400 MB depending on model size).
+
+```typescript
+// Always release contexts when done
+try {
+  const whisperContext = await initWhisper({ filePath: modelPath })
+  const vadContext = await initWhisperVad({ filePath: vadModelPath })
+  
+  // Use contexts...
+  const transcriber = new RealtimeTranscriber({ whisperContext, vadContext, audioStream })
+  await transcriber.start()
+  
+} finally {
+  // Clean up
+  await transcriber.stop()
+  await whisperContext.release()
+  await vadContext?.release()
+}
+```
+
+### Releasing All Contexts
+
+```typescript
+import { releaseAllWhisper, releaseAllWhisperVad } from 'whisper.rn'
+
+// Release all Whisper contexts
+await releaseAllWhisper()
+
+// Release all VAD contexts
+await releaseAllWhisperVad()
+```
+
+### Component Cleanup
+
+```typescript
+import { useEffect } from 'react'
+import { initWhisper } from 'whisper.rn'
+
+function TranscriptionComponent() {
+  const [context, setContext] = useState(null)
+
+  useEffect(() => {
+    let whisperContext
+    
+    initWhisper({ filePath: modelPath }).then(ctx => {
+      whisperContext = ctx
+      setContext(ctx)
+    })
+
+    return () => {
+      // Clean up on unmount
+      whisperContext?.release()
+    }
+  }, [])
+
+  return <View>...</View>
+}
+```
+
+## Memory Monitoring
+
+### Tracking Memory in RealtimeTranscriber
+
+```typescript
+const transcriber = new RealtimeTranscriber(
+  { whisperContext, audioStream },
+  { maxSlicesInMemory: 3 },
+  {
+    onTranscribe: (event) => {
+      const { memoryUsage } = event
+      console.log(`Memory: ${memoryUsage?.estimatedMB} MB`)
+      console.log(`Slices: ${memoryUsage?.slicesInMemory}`)
+      console.log(`Samples: ${memoryUsage?.totalSamples}`)
+    },
+  }
+)
+```
+
+### Manual Monitoring
+
+```typescript
+const sliceManager = new SliceManager(30, 3)
+
+setInterval(() => {
+  const info = sliceManager.getCurrentSliceInfo()
+  const usage = info.memoryUsage
+  
+  console.log(`Slices: ${usage.slicesInMemory}/${info.totalSlices}`)
+  console.log(`Current: ${info.currentSliceIndex}, Next: ${info.transcribeSliceIndex}`)
+  console.log(`Memory: ${usage.estimatedMB} MB`)
+}, 5000)
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Out of Memory Errors">
+    **Symptoms**: App crashes during long recording sessions
+    
+    **Solutions**:
+    - Reduce `maxSlicesInMemory` (try 1-2 for minimal usage)
+    - Use smaller model (tiny, base instead of medium/large)
+    - Disable `promptPreviousSlices` to avoid keeping slice results
+    - Reduce `audioSliceSec` (use 20-25 seconds instead of 30)
+    - Call `release()` on contexts when done
+  </Accordion>
+
+  <Accordion title="Memory Growing Indefinitely">
+    **Symptoms**: Memory usage increases without bound
+    
+    **Likely Causes**:
+    - Not calling `release()` on finished contexts
+    - Storing transcription results without limit
+    - Audio stream not stopping properly
+    
+    **Solutions**:
+    - Ensure `maxSlicesInMemory` is set (SliceManager auto-cleans)
+    - Release contexts: `await context.release()`
+    - Clear old transcription results periodically
+    - Verify `audioStream.stop()` is called
+  </Accordion>
+
+  <Accordion title="Slices Not Being Released">
+    **Symptoms**: Memory usage stays constant even with circular buffer
+    
+    **Debug**:
+    ```typescript
+    const info = sliceManager.getCurrentSliceInfo()
+    console.log('Slices:', info.totalSlices, 'Max:', maxSlicesInMemory)
+    console.log('Current:', info.currentSliceIndex, 'Transcribe:', info.transcribeSliceIndex)
+    ```
+    
+    **Solutions**:
+    - Verify `maxSlicesInMemory` is configured
+    - Check if slices are marked as processed
+    - Ensure cleanup logic is running
+  </Accordion>
+
+  <Accordion title="iOS Extended Virtual Addressing">
+    **Symptoms**: Large models crash on iOS
+    
+    **Solution**: Enable Extended Virtual Addressing entitlement
+    
+    Add to `Info.plist`:
+    ```xml
+    <key>UIRequiresFullScreen</key>
+    <false/>
+    <key>com.apple.developer.kernel.extended-virtual-addressing</key>
+    <true/>
+    ```
+    
+    This allows apps to use more memory for large models.
+  </Accordion>
+</AccordionGroup>
+
+## Memory Calculation Reference
+
+### Audio Data Size
+
+```
+16-bit PCM, Mono, 16kHz:
+- 1 second = 16,000 samples × 2 bytes = 32,000 bytes = 31.25 KB
+- 30 seconds = 960,000 bytes ≈ 937.5 KB ≈ 0.92 MB
+
+maxSlicesInMemory = 3:
+- Audio data: 3 × 0.92 MB ≈ 2.76 MB
+```
+
+### Model Size (Approximate)
+
+| Model | Size | RAM Usage |
+|-------|------|----------|
+| tiny.en | 75 MB | ~100 MB |
+| base.en | 142 MB | ~150 MB |
+| small.en | 466 MB | ~500 MB |
+| medium.en | 1.5 GB | ~1.8 GB |
+
+### Total Memory Estimate
+
+```
+Total ≈ Model RAM + (Slices × Slice Size) + Overhead
+
+Example (base.en, 3 slices):
+≈ 150 MB + (3 × 1 MB) + 50 MB = ~200 MB
+```
+
+## Related
+
+- [Realtime Transcription](/api-reference/realtime-transcriber) - Using SliceManager with RealtimeTranscriber
+- [Custom Audio Adapters](/advanced/custom-audio-adapters) - Audio stream integration
+- [Optimization](/advanced/optimization) - Performance tuning and threading

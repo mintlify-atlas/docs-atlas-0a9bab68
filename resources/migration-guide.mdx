@@ -1,0 +1,586 @@
+---
+title: Migration Guide
+description: Migrate from deprecated transcribeRealtime to RealtimeTranscriber
+---
+
+This guide helps you migrate from the deprecated `transcribeRealtime()` method to the modern `RealtimeTranscriber` class.
+
+## Why Migrate?
+
+The `RealtimeTranscriber` provides significant improvements over the legacy `transcribeRealtime()` API:
+
+<Note>
+**Key improvements:**
+- Better VAD (Voice Activity Detection) integration with auto-slicing
+- Improved memory management with configurable slice limits
+- More flexible audio stream adapters
+- Queue-based transcription processing
+- Enhanced stats and monitoring
+- Better error handling
+- Prompt chaining for improved context
+</Note>
+
+<Warning>
+The `transcribeRealtime()` method is **deprecated** and will show a warning. While it still works, it lacks the advanced features and optimizations of `RealtimeTranscriber`.
+</Warning>
+
+## Quick Comparison
+
+### Legacy API (`transcribeRealtime`)
+
+```typescript
+const { stop, subscribe } = await whisperContext.transcribeRealtime({
+  language: 'en',
+  realtimeAudioSec: 30,
+  realtimeAudioSliceSec: 30,
+  audioOutputPath: '/path/to/output.wav',
+})
+
+subscribe((event) => {
+  if (event.isCapturing) {
+    console.log('Capturing:', event.data?.result)
+  } else {
+    console.log('Final:', event.data?.result)
+  }
+})
+
+// Later
+await stop()
+```
+
+### Modern API (`RealtimeTranscriber`)
+
+```typescript
+import { RealtimeTranscriber } from 'whisper.rn'
+import { AudioPcmStreamAdapter } from 'whisper.rn/realtime-transcription'
+
+const audioStream = new AudioPcmStreamAdapter()
+
+const transcriber = new RealtimeTranscriber(
+  { whisperContext, vadContext, audioStream },
+  {
+    audioSliceSec: 30,
+    transcribeOptions: { language: 'en' },
+    audioOutputPath: '/path/to/output.wav',
+  },
+  {
+    onTranscribe: (event) => {
+      console.log('Result:', event.result)
+    },
+  }
+)
+
+await transcriber.start()
+
+// Later
+await transcriber.stop()
+```
+
+## Step-by-Step Migration
+
+<Steps>
+
+<Step title="Install audio stream dependency">
+The `RealtimeTranscriber` requires an audio stream adapter. Install the recommended adapter:
+
+```bash
+npm install @fugood/react-native-audio-pcm-stream
+# or
+yarn add @fugood/react-native-audio-pcm-stream
+```
+
+**iOS setup:**
+```bash
+cd ios && pod install
+```
+
+**Android setup** - No additional steps needed.
+</Step>
+
+<Step title="Initialize VAD context (optional but recommended)">
+While VAD is optional, it significantly improves realtime transcription:
+
+```typescript
+import { initWhisperVad } from 'whisper.rn'
+
+const vadContext = await initWhisperVad({
+  filePath: require('./models/silero_vad.onnx'),
+  useGpu: true,
+})
+```
+
+Download the Silero VAD model from the [whisper.rn repository](https://github.com/mybigday/whisper.rn/tree/master/example/assets).
+</Step>
+
+<Step title="Create audio stream adapter">
+```typescript
+import { AudioPcmStreamAdapter } from 'whisper.rn/realtime-transcription'
+
+const audioStream = new AudioPcmStreamAdapter()
+```
+</Step>
+
+<Step title="Migrate options and callbacks">
+Update your configuration to use the new API structure:
+
+**Before (transcribeRealtime):**
+```typescript
+const options = {
+  language: 'en',
+  translate: false,
+  maxLen: 1,
+  maxThreads: 4,
+  realtimeAudioSec: 30,
+  realtimeAudioSliceSec: 30,
+  realtimeAudioMinSec: 1,
+  audioOutputPath: outputPath,
+  useVad: true,
+  vadMs: 2000,
+  vadThold: 0.6,
+  vadFreqThold: 100,
+}
+```
+
+**After (RealtimeTranscriber):**
+```typescript
+import { RealtimeTranscriber } from 'whisper.rn'
+
+const transcriber = new RealtimeTranscriber(
+  {
+    whisperContext,
+    vadContext, // VAD now uses dedicated context
+    audioStream,
+  },
+  {
+    // Slice configuration
+    audioSliceSec: 30,
+    audioMinSec: 1,
+    maxSlicesInMemory: 3,
+    
+    // Transcription options
+    transcribeOptions: {
+      language: 'en',
+      translate: false,
+      maxLen: 1,
+      maxThreads: 4,
+    },
+    
+    // Output
+    audioOutputPath: outputPath,
+    
+    // Prompt configuration
+    initialPrompt: 'Your initial prompt here',
+    promptPreviousSlices: true,
+  },
+  {
+    // Callbacks (see next step)
+  }
+)
+```
+</Step>
+
+<Step title="Update event handling">
+**Before (transcribeRealtime):**
+```typescript
+subscribe((event) => {
+  if (event.isCapturing) {
+    // Realtime updates while recording
+    console.log('Progress:', event.data?.result)
+  } else {
+    // Final result
+    console.log('Final:', event.data?.result)
+    console.log('Process time:', event.processTime)
+  }
+})
+```
+
+**After (RealtimeTranscriber):**
+```typescript
+const transcriber = new RealtimeTranscriber(
+  { whisperContext, vadContext, audioStream },
+  { /* options */ },
+  {
+    onTranscribe: (event) => {
+      console.log('Transcription:', {
+        slice: event.slice,
+        result: event.result,
+        isFinal: event.isFinal,
+        processTime: event.processTime,
+      })
+    },
+    
+    onVad: (event) => {
+      console.log('VAD event:', event.event) // speech_start, speech_continue, speech_end
+    },
+    
+    onStats: (stats) => {
+      console.log('Stats:', {
+        slicesInMemory: stats.memoryUsage.slicesInMemory,
+        currentSliceAudioSec: stats.currentSlice.audioSec,
+      })
+    },
+    
+    onError: (error) => {
+      console.error('Error:', error)
+    },
+    
+    onStatusChange: (isActive) => {
+      console.log('Status:', isActive ? 'Recording' : 'Stopped')
+    },
+  }
+)
+```
+</Step>
+
+<Step title="Update start/stop logic">
+**Before:**
+```typescript
+const { stop, subscribe } = await whisperContext.transcribeRealtime(options)
+
+subscribe(handleEvent)
+
+// Later
+await stop()
+```
+
+**After:**
+```typescript
+const transcriber = new RealtimeTranscriber(
+  { whisperContext, vadContext, audioStream },
+  options,
+  callbacks // Events are passed during construction
+)
+
+await transcriber.start()
+
+// Later
+await transcriber.stop()
+```
+</Step>
+
+<Step title="Clean up resources">
+Don't forget to release all contexts:
+
+```typescript
+try {
+  await transcriber.start()
+  // ... transcription logic
+  await transcriber.stop()
+} finally {
+  // Release contexts
+  await whisperContext.release()
+  await vadContext?.release()
+}
+```
+</Step>
+
+</Steps>
+
+## Complete Migration Example
+
+### Before: Using `transcribeRealtime`
+
+```typescript
+import { initWhisper } from 'whisper.rn'
+import { PermissionsAndroid, Platform } from 'react-native'
+
+// Request microphone permission (Android)
+if (Platform.OS === 'android') {
+  await PermissionsAndroid.request(
+    PermissionsAndroid.PERMISSIONS.RECORD_AUDIO
+  )
+}
+
+// Initialize context
+const whisperContext = await initWhisper({
+  filePath: require('./models/ggml-base.en.bin'),
+})
+
+// Start realtime transcription
+const { stop, subscribe } = await whisperContext.transcribeRealtime({
+  language: 'en',
+  realtimeAudioSec: 30,
+  realtimeAudioSliceSec: 30,
+  audioOutputPath: `${RNFS.DocumentDirectoryPath}/recording.wav`,
+  useVad: true,
+  vadThold: 0.6,
+})
+
+// Handle events
+subscribe((event) => {
+  if (event.isCapturing) {
+    setTranscriptionText(event.data?.result || '')
+  } else {
+    setFinalResult(event.data?.result || '')
+  }
+})
+
+// Stop and cleanup
+const handleStop = async () => {
+  await stop()
+  await whisperContext.release()
+}
+```
+
+### After: Using `RealtimeTranscriber`
+
+```typescript
+import { initWhisper, initWhisperVad } from 'whisper.rn'
+import { RealtimeTranscriber } from 'whisper.rn'
+import { AudioPcmStreamAdapter } from 'whisper.rn/realtime-transcription'
+import { PermissionsAndroid, Platform } from 'react-native'
+import RNFS from 'react-native-fs'
+
+// Request microphone permission (Android)
+if (Platform.OS === 'android') {
+  await PermissionsAndroid.request(
+    PermissionsAndroid.PERMISSIONS.RECORD_AUDIO
+  )
+}
+
+// Initialize contexts
+const whisperContext = await initWhisper({
+  filePath: require('./models/ggml-base.en.bin'),
+})
+
+const vadContext = await initWhisperVad({
+  filePath: require('./models/silero_vad.onnx'),
+})
+
+// Create audio stream
+const audioStream = new AudioPcmStreamAdapter()
+
+// Create transcriber
+const transcriber = new RealtimeTranscriber(
+  { whisperContext, vadContext, audioStream },
+  {
+    audioSliceSec: 30,
+    maxSlicesInMemory: 3,
+    transcribeOptions: {
+      language: 'en',
+    },
+    audioOutputPath: `${RNFS.DocumentDirectoryPath}/recording.wav`,
+  },
+  {
+    onTranscribe: (event) => {
+      if (event.isFinal) {
+        setFinalResult(event.result)
+      } else {
+        setTranscriptionText(event.result)
+      }
+    },
+    onVad: (event) => {
+      console.log('VAD:', event.event)
+    },
+    onStats: (stats) => {
+      setStats(stats)
+    },
+    onError: (error) => {
+      console.error('Transcription error:', error)
+    },
+  }
+)
+
+// Start transcription
+await transcriber.start()
+
+// Stop and cleanup
+const handleStop = async () => {
+  await transcriber.stop()
+  await whisperContext.release()
+  await vadContext.release()
+}
+```
+
+## Key Differences
+
+### Audio Session Management (iOS)
+
+**Old API:**
+```typescript
+await whisperContext.transcribeRealtime({
+  audioSessionOnStartIos: {
+    category: 'playAndRecord',
+    options: ['defaultToSpeaker'],
+    mode: 'default',
+  },
+  audioSessionOnStopIos: 'restore',
+})
+```
+
+**New API:**
+
+Handle audio session manually using `AudioSessionIos`:
+
+```typescript
+import { AudioSessionIos } from 'whisper.rn'
+
+// Before starting
+await AudioSessionIos.setCategory('playAndRecord', ['defaultToSpeaker'])
+await AudioSessionIos.setMode('default')
+await AudioSessionIos.setActive(true)
+
+const transcriber = new RealtimeTranscriber(/* ... */)
+await transcriber.start()
+
+// After stopping
+await transcriber.stop()
+await AudioSessionIos.setActive(false)
+```
+
+### VAD Configuration
+
+**Old API:**
+
+VAD was configured through options with limited control:
+
+```typescript
+await whisperContext.transcribeRealtime({
+  useVad: true,
+  vadMs: 2000,
+  vadThold: 0.6,
+  vadFreqThold: 100,
+})
+```
+
+**New API:**
+
+VAD now uses a dedicated context with more configuration options:
+
+```typescript
+import { initWhisperVad, VAD_PRESETS } from 'whisper.rn'
+
+const vadContext = await initWhisperVad({
+  filePath: require('./models/silero_vad.onnx'),
+  useGpu: true,
+})
+
+// Use presets or custom configuration
+const preset = VAD_PRESETS.QUALITY // or FAST, BALANCED
+
+const realtimeVadContext = new RingBufferVad(
+  vadContext,
+  preset // Includes all VAD thresholds and settings
+)
+
+const transcriber = new RealtimeTranscriber(
+  { whisperContext, vadContext: realtimeVadContext, audioStream },
+  { /* options */ }
+)
+```
+
+### Memory Management
+
+**Old API:** Limited control over memory usage
+
+**New API:** Fine-grained control:
+
+```typescript
+const transcriber = new RealtimeTranscriber(
+  { whisperContext, vadContext, audioStream },
+  {
+    maxSlicesInMemory: 3, // Keep only last 3 slices
+  },
+  {
+    onStats: (stats) => {
+      console.log('Memory usage:', {
+        slicesInMemory: stats.memoryUsage.slicesInMemory,
+        totalBytes: stats.memoryUsage.totalBytes,
+        oldestSlice: stats.memoryUsage.oldestSlice,
+        newestSlice: stats.memoryUsage.newestSlice,
+      })
+    },
+  }
+)
+```
+
+## Troubleshooting Migration
+
+<Accordion title="Error: AudioPcmStreamAdapter not found">
+Make sure you've installed the audio stream dependency:
+
+```bash
+yarn add @fugood/react-native-audio-pcm-stream
+cd ios && pod install
+```
+
+Import the adapter:
+
+```typescript
+import { AudioPcmStreamAdapter } from 'whisper.rn/realtime-transcription'
+```
+</Accordion>
+
+<Accordion title="VAD not working">
+Ensure you:
+
+1. Initialized VAD context:
+   ```typescript
+   const vadContext = await initWhisperVad({
+     filePath: require('./models/silero_vad.onnx'),
+   })
+   ```
+
+2. Downloaded the VAD model file from the example app
+
+3. Passed VAD context to transcriber:
+   ```typescript
+   new RealtimeTranscriber(
+     { whisperContext, vadContext, audioStream },
+     { /* options */ }
+   )
+   ```
+</Accordion>
+
+<Accordion title="Events not firing">
+Make sure you're passing callbacks during construction, not after:
+
+```typescript
+// ✅ Correct
+const transcriber = new RealtimeTranscriber(
+  dependencies,
+  options,
+  {
+    onTranscribe: (event) => { /* ... */ },
+    onVad: (event) => { /* ... */ },
+  }
+)
+
+// ❌ Wrong - callbacks cannot be added after construction
+const transcriber = new RealtimeTranscriber(dependencies, options)
+transcriber.onTranscribe = (event) => { /* Won't work */ }
+```
+</Accordion>
+
+<Accordion title="Audio not saving to file">
+Ensure you:
+
+1. Installed a filesystem library:
+   ```bash
+   yarn add react-native-fs
+   ```
+
+2. Passed `fs` dependency:
+   ```typescript
+   import RNFS from 'react-native-fs'
+   
+   new RealtimeTranscriber(
+     { whisperContext, vadContext, audioStream, fs: RNFS },
+     { audioOutputPath: `${RNFS.DocumentDirectoryPath}/output.wav` }
+   )
+   ```
+</Accordion>
+
+## Benefits After Migration
+
+Once migrated, you'll have access to:
+
+- **Better VAD**: More accurate speech detection with configurable presets
+- **Memory control**: Limit slices in memory to prevent crashes
+- **Prompt chaining**: Context from previous slices improves transcription continuity
+- **Stats monitoring**: Real-time stats for debugging and optimization
+- **Flexible adapters**: Custom audio stream sources
+- **Queue processing**: Controlled transcription processing
+- **Better errors**: More detailed error reporting
+
+See the [Realtime Transcription guide](/guides/realtime-transcription) for advanced features and usage patterns.

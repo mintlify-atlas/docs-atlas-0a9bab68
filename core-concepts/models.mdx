@@ -1,0 +1,565 @@
+---
+title: 'Models'
+description: 'GGML models, quantization formats, Core ML acceleration, and model selection'
+---
+
+## Overview
+
+whisper.rn uses GGML (GPT-Generated Model Language) formatted models from whisper.cpp. Understanding model types, sizes, and optimization options is crucial for balancing accuracy and performance.
+
+## GGML Model Format
+
+GGML is a tensor library for machine learning, used by whisper.cpp for efficient inference. All Whisper models must be converted to GGML format (`.bin` files) to work with whisper.rn.
+
+### Model Download
+
+Official GGML models are available from Hugging Face:
+
+```bash
+# Base URL
+https://huggingface.co/ggerganov/whisper.cpp/tree/main
+
+# Example: Download tiny.en model
+curl -LO https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin
+```
+
+<Info>
+Models are hosted on Hugging Face at the official whisper.cpp repository. Always download from trusted sources to ensure model integrity.
+</Info>
+
+## Model Sizes
+
+Whisper models come in several sizes, trading accuracy for speed and memory:
+
+| Model    | Parameters | GGML Size | Memory | Speed (iPhone 13) | Use Case |
+|----------|------------|-----------|--------|-------------------|----------|
+| tiny     | 39 M       | 75 MB     | ~75 MB | ~1x realtime      | Quick drafts, testing |
+| tiny.en  | 39 M       | 75 MB     | ~75 MB | ~1x realtime      | English-only, fastest |
+| base     | 74 M       | 140 MB    | ~140 MB| ~0.8x realtime    | Good speed/accuracy |
+| base.en  | 74 M       | 140 MB    | ~140 MB| ~0.8x realtime    | English-only |
+| small    | 244 M      | 460 MB    | ~460 MB| ~0.5x realtime    | Production quality |
+| small.en | 244 M      | 460 MB    | ~460 MB| ~0.5x realtime    | English production |
+| medium   | 769 M      | 1.5 GB    | ~1.5 GB| ~0.2x realtime    | High accuracy |
+| medium.en| 769 M      | 1.5 GB    | ~1.5 GB| ~0.2x realtime    | English high accuracy |
+| large-v1 | 1550 M     | 2.9 GB    | ~2.9 GB| ~0.1x realtime    | Best accuracy |
+| large-v2 | 1550 M     | 2.9 GB    | ~2.9 GB| ~0.1x realtime    | Improved v1 |
+| large-v3 | 1550 M     | 2.9 GB    | ~2.9 GB| ~0.1x realtime    | Latest, best |
+
+<Note>
+- **.en models**: English-only, optimized for English transcription
+- **Multilingual models**: Support 99 languages but slightly slower
+- Speed metrics are approximate and vary by device, settings, and audio content
+</Note>
+
+### Model Selection Guide
+
+**Mobile Apps (iOS/Android):**
+- **Recommended**: `tiny.en` or `base.en` for English
+- **Alternative**: `small` for better accuracy (if memory allows)
+- **Avoid**: `large` models on mobile (too slow and memory-intensive)
+
+**Tablets/High-end Devices:**
+- **Recommended**: `small` or `medium`
+- **Use case dependent**: `large-v3` for offline, high-quality transcription
+
+**Real-time Transcription:**
+- **Required**: `tiny.en` or `base.en`
+- Models must process faster than realtime (>1x speed)
+
+## Quantized Models
+
+Quantization reduces model size and improves speed by using lower precision for weights:
+
+### Quantization Formats
+
+| Format | Precision | Size vs f16 | Quality | Description |
+|--------|-----------|-------------|---------|-------------|
+| f16    | 16-bit float | 100% | Best | Original precision |
+| q8_0   | 8-bit int | ~50% | Very good | Recommended balance |
+| q5_0   | 5-bit int | ~35% | Good | Smaller, faster |
+| q4_0   | 4-bit int | ~25% | Fair | Smallest, quality loss |
+
+<Warning>
+Quantization below q5_0 may cause noticeable quality degradation. Test thoroughly before deploying q4_0 models.
+</Warning>
+
+### Quantized Model Examples
+
+```bash
+# Download quantized models
+ggml-tiny.en-q8_0.bin      # 8-bit quantized tiny.en (~40 MB)
+ggml-base.en-q8_0.bin      # 8-bit quantized base.en (~75 MB)
+ggml-small-q5_0.bin        # 5-bit quantized small (~160 MB)
+```
+
+### Using Quantized Models
+
+```typescript
+import { initWhisper } from 'whisper.rn'
+
+// Use quantized model (same API as regular models)
+const context = await initWhisper({
+  filePath: 'file:///path/to/ggml-base.en-q8_0.bin',
+})
+
+// Transcription works identically
+const { promise } = context.transcribe(audioFile, { language: 'en' })
+const result = await promise
+```
+
+<Info>
+Quantized models are drop-in replacements. No code changes required!
+</Info>
+
+## Core ML Acceleration (iOS)
+
+Core ML is Apple's machine learning framework, providing hardware-accelerated inference on iOS and tvOS.
+
+### Core ML Model Structure
+
+Core ML models accelerate the **encoder** (the slowest part of Whisper). The decoder still uses the GGML model.
+
+**File structure:**
+```
+ggml-tiny.en.bin                    # GGML model (required)
+ggml-tiny.en-encoder.mlmodelc/      # Core ML encoder (optional)
+  ├── model.mil                      # Model interface language
+  ├── coremldata.bin                 # Core ML data
+  ├── weights/
+  │   └── weight.bin                 # Model weights
+  ├── metadata.json                  # Optional metadata
+  └── analytics/
+      └── coremldata.bin             # Optional analytics
+```
+
+<Note>
+Core ML models are **directories** (`.mlmodelc`), not single files. Only 3 files are required: `model.mil`, `coremldata.bin`, and `weights/weight.bin`.
+</Note>
+
+### Downloading Core ML Models
+
+Core ML models are hosted alongside GGML models:
+
+```bash
+# Models are distributed as ZIP archives
+https://huggingface.co/ggerganov/whisper.cpp/tree/main
+
+# Example: Download and extract tiny.en Core ML
+curl -LO https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en-encoder.mlmodelc.zip
+unzip ggml-tiny.en-encoder.mlmodelc.zip
+```
+
+### Using Core ML Models
+
+#### Option 1: Runtime Download
+
+Download and extract Core ML models at runtime:
+
+```typescript
+import RNFS from 'react-native-fs'
+import { unzip } from 'react-native-zip-archive'
+
+async function downloadCoreMLModel() {
+  const modelUrl = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en-encoder.mlmodelc.zip'
+  const zipPath = `${RNFS.DocumentDirectoryPath}/coreml-model.zip`
+  const extractPath = `${RNFS.DocumentDirectoryPath}/models/`
+  
+  // Download
+  await RNFS.downloadFile({
+    fromUrl: modelUrl,
+    toFile: zipPath,
+  }).promise
+  
+  // Extract
+  await unzip(zipPath, extractPath)
+  
+  // Cleanup zip
+  await RNFS.unlink(zipPath)
+  
+  return `${extractPath}ggml-tiny.en-encoder.mlmodelc`
+}
+
+// Initialize with Core ML
+const context = await initWhisper({
+  filePath: `${RNFS.DocumentDirectoryPath}/models/ggml-tiny.en.bin`,
+  useCoreMLIos: true, // Enable Core ML (default: true)
+})
+
+if (context.gpu) {
+  console.log('Using Core ML acceleration!')
+} else {
+  console.log('Core ML not available:', context.reasonNoGPU)
+}
+```
+
+#### Option 2: Bundle with App
+
+Bundle Core ML models using Metro bundler (increases app size):
+
+```typescript
+import { Platform } from 'react-native'
+import { initWhisper } from 'whisper.rn'
+
+const context = await initWhisper({
+  filePath: require('../assets/ggml-tiny.en.bin'),
+  coreMLModelAsset: Platform.OS === 'ios' ? {
+    filename: 'ggml-tiny.en-encoder.mlmodelc',
+    assets: [
+      require('../assets/ggml-tiny.en-encoder.mlmodelc/weights/weight.bin'),
+      require('../assets/ggml-tiny.en-encoder.mlmodelc/model.mil'),
+      require('../assets/ggml-tiny.en-encoder.mlmodelc/coremldata.bin'),
+    ],
+  } : undefined,
+})
+```
+
+**Update `metro.config.js`:**
+
+```javascript
+const defaultAssetExts = require('metro-config/src/defaults/defaults').assetExts
+
+module.exports = {
+  resolver: {
+    assetExts: [
+      ...defaultAssetExts,
+      'bin',  // GGML models
+      'mil',  // Core ML interface
+    ],
+  },
+}
+```
+
+<Warning>
+Bundling large models significantly increases app size:
+- tiny.en: +75 MB (GGML) + ~35 MB (Core ML) = 110 MB
+- base.en: +140 MB (GGML) + ~65 MB (Core ML) = 205 MB
+
+For production apps, prefer runtime download.
+</Warning>
+
+### Core ML Performance
+
+Core ML acceleration provides significant speedups:
+
+| Model | CPU Only | Core ML | Speedup |
+|-------|----------|---------|----------|
+| tiny.en | 1x realtime | 3-4x realtime | 3-4x |
+| base.en | 0.8x realtime | 2-3x realtime | 2.5-3.5x |
+| small | 0.5x realtime | 1.5-2x realtime | 3-4x |
+
+<Info>
+Core ML speedup varies by device. Neural Engine (A12+) provides best acceleration.
+</Info>
+
+### Disabling Core ML
+
+Disable Core ML even if model files exist:
+
+```typescript
+const context = await initWhisper({
+  filePath: 'file:///path/to/ggml-tiny.en.bin',
+  useCoreMLIos: false, // Disable Core ML
+})
+
+console.log('GPU enabled:', context.gpu) // false
+```
+
+### Core ML Build Configuration
+
+Control Core ML compilation in iOS builds:
+
+**Disable Core ML in Podfile:**
+
+```ruby
+pre_install do |installer|
+  ENV['RNWHISPER_DISABLE_COREML'] = '1'
+end
+```
+
+**Check Core ML availability at runtime:**
+
+```typescript
+import { isUseCoreML, isCoreMLAllowFallback } from 'whisper.rn'
+
+if (isUseCoreML) {
+  console.log('Core ML support compiled in')
+  
+  if (isCoreMLAllowFallback) {
+    console.log('Fallback to CPU enabled if Core ML fails')
+  }
+}
+```
+
+## Metal/GPU Acceleration
+
+Metal provides GPU acceleration on iOS and tvOS (alternative to Core ML).
+
+### Enabling Metal
+
+```typescript
+const context = await initWhisper({
+  filePath: 'file:///path/to/model.bin',
+  useGpu: true,          // Enable Metal (default: true)
+  useFlashAttn: false,   // Flash Attention (requires GPU, default: false)
+})
+
+if (context.gpu) {
+  console.log('Using Metal GPU acceleration')
+}
+```
+
+<Note>
+If both Core ML and Metal are enabled, **Core ML takes priority**. Set `useCoreMLIos: false` to force Metal.
+</Note>
+
+### Flash Attention
+
+Flash Attention is an optimized attention mechanism for GPUs:
+
+```typescript
+const context = await initWhisper({
+  filePath: 'file:///path/to/model.bin',
+  useGpu: true,
+  useFlashAttn: true,  // Enable Flash Attention
+})
+```
+
+<Warning>
+Flash Attention only works when GPU is available. Ignored if `useGpu: false`.
+</Warning>
+
+### Disabling Metal
+
+Disable Metal compilation in Podfile:
+
+```ruby
+pre_install do |installer|
+  ENV['RNWHISPER_DISABLE_METAL'] = '1'
+end
+```
+
+## Model Management
+
+### Bundling Models with App
+
+**Pros:**
+- Works offline immediately
+- No download wait time
+- No network dependency
+
+**Cons:**
+- Large app size increase
+- Cannot update models without app update
+- App Store size limits
+
+```typescript
+// Bundle model as asset
+const context = await initWhisper({
+  filePath: require('../assets/ggml-tiny.en.bin'),
+})
+```
+
+### Runtime Model Download
+
+**Pros:**
+- Smaller app size
+- Can update models without app update
+- User can choose model size
+
+**Cons:**
+- Requires network on first use
+- Storage management needed
+- Download errors to handle
+
+```typescript
+import RNFS from 'react-native-fs'
+
+async function downloadModel(modelName: string) {
+  const modelUrl = `https://huggingface.co/ggerganov/whisper.cpp/resolve/main/${modelName}`
+  const modelPath = `${RNFS.DocumentDirectoryPath}/models/${modelName}`
+  
+  // Check if already downloaded
+  const exists = await RNFS.exists(modelPath)
+  if (exists) {
+    console.log('Model already downloaded')
+    return modelPath
+  }
+  
+  // Create directory
+  await RNFS.mkdir(`${RNFS.DocumentDirectoryPath}/models`)
+  
+  // Download with progress
+  const download = RNFS.downloadFile({
+    fromUrl: modelUrl,
+    toFile: modelPath,
+    progressInterval: 1000,
+    progressDivider: 1,
+    begin: (res) => {
+      console.log('Download started:', res.contentLength, 'bytes')
+    },
+    progress: (res) => {
+      const progress = (res.bytesWritten / res.contentLength) * 100
+      console.log(`Progress: ${progress.toFixed(2)}%`)
+    },
+  })
+  
+  const result = await download.promise
+  
+  if (result.statusCode === 200) {
+    console.log('Download complete:', modelPath)
+    return modelPath
+  } else {
+    throw new Error(`Download failed: ${result.statusCode}`)
+  }
+}
+
+// Usage
+const modelPath = await downloadModel('ggml-tiny.en.bin')
+const context = await initWhisper({ filePath: modelPath })
+```
+
+### Model Caching Strategy
+
+```typescript
+class ModelManager {
+  private static models = new Map<string, string>()
+  
+  static async getModel(name: string): Promise<string> {
+    // Check memory cache
+    if (this.models.has(name)) {
+      return this.models.get(name)!
+    }
+    
+    // Check disk cache
+    const cachedPath = `${RNFS.DocumentDirectoryPath}/models/${name}`
+    const exists = await RNFS.exists(cachedPath)
+    
+    if (exists) {
+      this.models.set(name, cachedPath)
+      return cachedPath
+    }
+    
+    // Download
+    const downloadedPath = await downloadModel(name)
+    this.models.set(name, downloadedPath)
+    return downloadedPath
+  }
+  
+  static async clearCache() {
+    const modelsDir = `${RNFS.DocumentDirectoryPath}/models`
+    await RNFS.unlink(modelsDir)
+    this.models.clear()
+  }
+}
+```
+
+## Model Conversion
+
+Convert original Whisper models to GGML format:
+
+```bash
+# Clone whisper.cpp
+git clone https://github.com/ggerganov/whisper.cpp
+cd whisper.cpp
+
+# Install Python dependencies
+pip install -r requirements.txt
+
+# Download original Whisper model
+python -m whisper --model tiny.en --output_dir models/
+
+# Convert to GGML
+python convert-pt-to-ggml.py models/tiny.en/model.pt models/ tiny.en
+
+# Output: models/ggml-tiny.en.bin
+```
+
+### Quantizing Models
+
+```bash
+# Build quantization tool
+make quantize
+
+# Quantize to q8_0
+./quantize models/ggml-base.en.bin models/ggml-base.en-q8_0.bin q8_0
+
+# Quantize to q5_0
+./quantize models/ggml-base.en.bin models/ggml-base.en-q5_0.bin q5_0
+```
+
+## Best Practices
+
+### 1. Start Small, Scale Up
+
+```typescript
+// Development: Fast iteration with tiny
+const devContext = await initWhisper({
+  filePath: require('../assets/ggml-tiny.en.bin'),
+})
+
+// Production: Better quality with base
+const prodContext = await initWhisper({
+  filePath: await ModelManager.getModel('ggml-base.en-q8_0.bin'),
+})
+```
+
+### 2. Use Quantized Models in Production
+
+```typescript
+// ❌ Avoid: Full precision models in production
+const context = await initWhisper({
+  filePath: 'ggml-base.en.bin', // 140 MB
+})
+
+// ✅ Recommended: Quantized models
+const context = await initWhisper({
+  filePath: 'ggml-base.en-q8_0.bin', // 75 MB, minimal quality loss
+})
+```
+
+### 3. Enable Hardware Acceleration
+
+```typescript
+// ✅ Best: Enable all optimizations
+const context = await initWhisper({
+  filePath: modelPath,
+  useGpu: true,        // Metal/GPU
+  useCoreMLIos: true,  // Core ML (iOS)
+  useFlashAttn: false, // Conservative default
+})
+```
+
+### 4. Validate Model Files
+
+```typescript
+async function validateModel(filePath: string) {
+  // Check file exists
+  const exists = await RNFS.exists(filePath)
+  if (!exists) {
+    throw new Error('Model file not found')
+  }
+  
+  // Check file size (GGML models > 1MB)
+  const stat = await RNFS.stat(filePath)
+  if (stat.size < 1024 * 1024) {
+    throw new Error('Model file too small, may be corrupted')
+  }
+  
+  // Check GGML magic number (first 4 bytes: 'GGML')
+  const header = await RNFS.read(filePath, 4, 0, 'utf8')
+  if (header !== 'GGML' && header !== 'ggml') {
+    throw new Error('Not a valid GGML model file')
+  }
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Performance" icon="gauge-high" href="/core-concepts/performance">
+    Optimize transcription performance and threading
+  </Card>
+  <Card title="Audio Formats" icon="file-audio" href="/core-concepts/audio-formats">
+    Learn about audio format requirements
+  </Card>
+</CardGroup>

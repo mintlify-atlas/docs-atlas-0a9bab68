@@ -1,0 +1,447 @@
+---
+title: 'WhisperContext'
+description: 'Methods for transcribing audio with a Whisper context'
+---
+
+## Overview
+
+The `WhisperContext` class provides methods for transcribing audio files and data. It is created by calling `initWhisper()`.
+
+## Properties
+
+<ResponseField name="id" type="number">
+  Unique identifier for this context
+</ResponseField>
+
+<ResponseField name="ptr" type="number">
+  Native context pointer (for internal use)
+</ResponseField>
+
+<ResponseField name="gpu" type="boolean">
+  Whether GPU/Metal acceleration is active for this context
+</ResponseField>
+
+<ResponseField name="reasonNoGPU" type="string">
+  Explanation if GPU is not available (empty string if GPU is active)
+</ResponseField>
+
+## Methods
+
+### transcribe()
+
+Transcribe an audio file or base64-encoded WAV data.
+
+```typescript
+transcribe(
+  filePathOrBase64: string | number,
+  options?: TranscribeFileOptions
+): { stop: () => Promise<void>, promise: Promise<TranscribeResult> }
+```
+
+#### Parameters
+
+<ParamField path="filePathOrBase64" type="string | number" required>
+  Audio file path, base64 WAV data, or asset require.
+  
+  **Supported formats:**
+  - File path: `'/path/to/audio.wav'`
+  - Asset: `require('../assets/sample.wav')`
+  - Base64 WAV: `'data:audio/wav;base64,...'`
+  - `file://` URI (automatically normalized)
+  
+  <Warning>Remote URLs are not supported. Download the file first.</Warning>
+</ParamField>
+
+<ParamField path="options" type="TranscribeFileOptions">
+  Transcription options.
+  
+  <Expandable title="properties">
+    <ParamField path="language" type="string" default="'auto'">
+      Spoken language code (e.g., `'en'`, `'es'`, `'fr'`). Use `'auto'` for auto-detection.
+    </ParamField>
+    
+    <ParamField path="translate" type="boolean" default="false">
+      Translate from source language to English
+    </ParamField>
+    
+    <ParamField path="maxThreads" type="number" default="2-4">
+      Number of threads for computation. Default: 2 for 4-core devices, 4 for more cores.
+    </ParamField>
+    
+    <ParamField path="maxLen" type="number">
+      Maximum segment length in characters
+    </ParamField>
+    
+    <ParamField path="tokenTimestamps" type="boolean" default="false">
+      Enable word-level timestamps
+    </ParamField>
+    
+    <ParamField path="offset" type="number">
+      Time offset in milliseconds to start transcribing from
+    </ParamField>
+    
+    <ParamField path="duration" type="number">
+      Duration of audio to process in milliseconds
+    </ParamField>
+    
+    <ParamField path="temperature" type="number" default="0">
+      Initial decoding temperature for sampling
+    </ParamField>
+    
+    <ParamField path="beamSize" type="number">
+      Beam size for beam search (slower but more accurate than greedy)
+    </ParamField>
+    
+    <ParamField path="prompt" type="string">
+      Initial prompt to guide transcription
+    </ParamField>
+    
+    <ParamField path="onProgress" type="(progress: number) => void">
+      Progress callback, receives values from 0-100
+    </ParamField>
+    
+    <ParamField path="onNewSegments" type="(result: TranscribeNewSegmentsResult) => void">
+      Callback when new segments are transcribed
+      
+      <Expandable title="TranscribeNewSegmentsResult">
+        <ResponseField name="nNew" type="number">
+          Number of new segments in this batch
+        </ResponseField>
+        <ResponseField name="totalNNew" type="number">
+          Total number of new segments so far
+        </ResponseField>
+        <ResponseField name="result" type="string">
+          Accumulated transcription text
+        </ResponseField>
+        <ResponseField name="segments" type="Array<Segment>">
+          Array of new segments
+        </ResponseField>
+      </Expandable>
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+#### Returns
+
+<ResponseField name="stop" type="() => Promise<void>">
+  Function to abort the transcription
+</ResponseField>
+
+<ResponseField name="promise" type="Promise<TranscribeResult>">
+  Promise that resolves with the transcription result
+  
+  <Expandable title="TranscribeResult">
+    <ResponseField name="result" type="string">
+      The complete transcribed text
+    </ResponseField>
+    
+    <ResponseField name="language" type="string">
+      Detected or specified language code
+    </ResponseField>
+    
+    <ResponseField name="segments" type="Array<Segment>">
+      Array of transcribed segments with timestamps
+      
+      <Expandable title="Segment">
+        <ResponseField name="text" type="string">
+          Segment text
+        </ResponseField>
+        <ResponseField name="t0" type="number">
+          Start time in milliseconds
+        </ResponseField>
+        <ResponseField name="t1" type="number">
+          End time in milliseconds
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+    
+    <ResponseField name="isAborted" type="boolean">
+      Whether the transcription was aborted
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+#### Example
+
+```typescript
+const { stop, promise } = whisperContext.transcribe(
+  require('../assets/sample.wav'),
+  {
+    language: 'en',
+    maxLen: 1,
+    tokenTimestamps: true,
+    onProgress: (progress) => {
+      console.log(`Progress: ${progress}%`)
+    },
+  }
+)
+
+const { result, segments } = await promise
+console.log('Transcription:', result)
+
+segments.forEach((segment) => {
+  console.log(`[${segment.t0}ms -> ${segment.t1}ms] ${segment.text}`)
+})
+```
+
+---
+
+### transcribeData()
+
+Transcribe raw audio data from base64-encoded float32 PCM or ArrayBuffer.
+
+```typescript
+transcribeData(
+  data: string | ArrayBuffer,
+  options?: TranscribeFileOptions
+): { stop: () => Promise<void>, promise: Promise<TranscribeResult> }
+```
+
+#### Parameters
+
+<ParamField path="data" type="string | ArrayBuffer" required>
+  Raw audio data. Must be 16-bit PCM, mono, 16kHz.
+  
+  - **string**: Base64-encoded float32 PCM data
+  - **ArrayBuffer**: Raw 16-bit PCM data (uses JSI for efficient transfer)
+</ParamField>
+
+<ParamField path="options" type="TranscribeFileOptions">
+  Same options as `transcribe()`
+</ParamField>
+
+#### Returns
+
+Same return type as `transcribe()`.
+
+#### Example
+
+```typescript
+// Using ArrayBuffer (recommended for performance)
+const audioBuffer = new Int16Array([...]).buffer
+const { promise } = whisperContext.transcribeData(audioBuffer, {
+  language: 'en',
+})
+const { result } = await promise
+
+// Using base64 PCM data
+const base64Data = 'base64EncodedFloat32PCM...'
+const { promise: promise2 } = whisperContext.transcribeData(base64Data)
+const { result: result2 } = await promise2
+```
+
+<Info>
+  ArrayBuffer transcription uses JSI bindings for efficient memory transfer, avoiding JSON serialization overhead.
+</Info>
+
+---
+
+### transcribeRealtime() <Badge variant="warning">Deprecated</Badge>
+
+Transcribe audio from the device microphone in real-time.
+
+<Warning>
+  This method is deprecated. Use [`RealtimeTranscriber`](/api-reference/realtime-transcriber) instead for enhanced features including VAD auto-slicing and better memory management.
+</Warning>
+
+```typescript
+transcribeRealtime(
+  options?: TranscribeRealtimeOptions
+): Promise<{
+  stop: () => Promise<void>,
+  subscribe: (callback: (event: TranscribeRealtimeEvent) => void) => void
+}>
+```
+
+#### Parameters
+
+<ParamField path="options" type="TranscribeRealtimeOptions">
+  Extends `TranscribeFileOptions` with additional realtime options.
+  
+  <Expandable title="properties">
+    <ParamField path="realtimeAudioSec" type="number" default="30">
+      Realtime record max duration in seconds. Due to whisper.cpp processing audio in 30-second chunks, values ≤ 30 are recommended.
+    </ParamField>
+    
+    <ParamField path="realtimeAudioSliceSec" type="number">
+      Audio slice duration for processing. Set < 30 for performance improvements. Default: equal to `realtimeAudioSec`.
+    </ParamField>
+    
+    <ParamField path="realtimeAudioMinSec" type="number" default="1">
+      Minimum audio duration to start transcription (0.5ms - realtimeAudioSliceSec)
+    </ParamField>
+    
+    <ParamField path="audioOutputPath" type="string">
+      Output path to save recorded audio file. If not set, audio is not saved.
+    </ParamField>
+    
+    <ParamField path="useVad" type="boolean" default="false">
+      Enable Voice Activity Detection to start transcription when speech is detected
+    </ParamField>
+    
+    <ParamField path="vadMs" type="number" default="2000">
+      Length of audio collected for VAD (minimum 2000ms)
+    </ParamField>
+    
+    <ParamField path="vadThold" type="number" default="0.6">
+      VAD threshold (0.0-1.0)
+    </ParamField>
+    
+    <ParamField path="audioSessionOnStartIos" type="AudioSessionSettingIos">
+      iOS audio session settings when starting transcription
+    </ParamField>
+    
+    <ParamField path="audioSessionOnStopIos" type="string | AudioSessionSettingIos">
+      iOS audio session settings when stopping. Use `'restore'` to restore previous state.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+#### Example
+
+```typescript
+const { stop, subscribe } = await whisperContext.transcribeRealtime({
+  language: 'en',
+  realtimeAudioSec: 60,
+  realtimeAudioSliceSec: 25,
+  audioOutputPath: '/path/to/save/recording.wav',
+})
+
+subscribe((event) => {
+  const { isCapturing, data, processTime, recordingTime } = event
+  console.log(`Capturing: ${isCapturing}`)
+  console.log(`Result: ${data?.result}`)
+  
+  if (!isCapturing) {
+    console.log('Finished recording')
+  }
+})
+
+// Stop after 10 seconds
+setTimeout(() => stop(), 10000)
+```
+
+---
+
+### bench()
+
+Run a benchmark test to measure model performance.
+
+```typescript
+bench(maxThreads: number): Promise<BenchResult>
+```
+
+#### Parameters
+
+<ParamField path="maxThreads" type="number" required>
+  Maximum number of threads to use for the benchmark
+</ParamField>
+
+#### Returns
+
+<ResponseField name="BenchResult" type="object">
+  <Expandable title="properties">
+    <ResponseField name="config" type="string">
+      Model configuration string
+    </ResponseField>
+    
+    <ResponseField name="nThreads" type="number">
+      Number of threads used
+    </ResponseField>
+    
+    <ResponseField name="encodeMs" type="number">
+      Encoder time in milliseconds
+    </ResponseField>
+    
+    <ResponseField name="decodeMs" type="number">
+      Decoder time in milliseconds
+    </ResponseField>
+    
+    <ResponseField name="batchMs" type="number">
+      Batch processing time in milliseconds
+    </ResponseField>
+    
+    <ResponseField name="promptMs" type="number">
+      Prompt processing time in milliseconds
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+#### Example
+
+```typescript
+const benchResult = await whisperContext.bench(4)
+console.log('Benchmark results:')
+console.log(`  Threads: ${benchResult.nThreads}`)
+console.log(`  Encode: ${benchResult.encodeMs}ms`)
+console.log(`  Decode: ${benchResult.decodeMs}ms`)
+```
+
+---
+
+### release()
+
+Release the context and free its memory.
+
+```typescript
+release(): Promise<void>
+```
+
+<Warning>
+  Always release contexts when done to prevent memory leaks. Contexts hold significant native memory.
+</Warning>
+
+#### Example
+
+```typescript
+try {
+  // Use the context
+  const { promise } = whisperContext.transcribe(audioFile)
+  await promise
+} finally {
+  // Always release
+  await whisperContext.release()
+}
+```
+
+## Audio Format Requirements
+
+For all transcription methods:
+
+- **Sample rate**: 16kHz (required by Whisper)
+- **Channels**: Mono (1 channel)
+- **Format**: 16-bit PCM
+- **Supported inputs**: WAV files, base64 WAV, raw PCM data, ArrayBuffer
+
+## Error Handling
+
+```typescript
+try {
+  const { promise } = whisperContext.transcribe(audioFile, {
+    language: 'en',
+  })
+  const { result } = await promise
+} catch (error) {
+  if (error.message.includes('Invalid asset')) {
+    console.error('Audio file not found')
+  } else if (error.message.includes('remote file')) {
+    console.error('Cannot transcribe remote URL')
+  } else {
+    console.error('Transcription failed:', error)
+  }
+}
+```
+
+## Performance Tips
+
+- Use `maxLen: 1` for better real-time performance
+- Enable `tokenTimestamps` only when needed (adds overhead)
+- Adjust `maxThreads` based on device capabilities
+- Use `beamSize` for better accuracy (slower than greedy search)
+- Test in Release mode for accurate timing
+
+## See Also
+
+- [initWhisper()](/api-reference/init-whisper) - Initialize a context
+- [Release Functions](/api-reference/release-functions) - Memory management
+- [RealtimeTranscriber](/api-reference/realtime-transcriber) - Modern realtime API

@@ -1,0 +1,515 @@
+---
+title: 'Audio Formats'
+description: 'Audio format requirements, conversion, and optimization for whisper.rn'
+---
+
+## Overview
+
+whisper.rn requires specific audio format constraints to work with the underlying whisper.cpp engine. Understanding these requirements is essential for successful transcription.
+
+## Required Audio Format
+
+### Core Requirements
+
+Whisper models require audio in this exact format:
+
+```typescript
+{
+  sampleRate: 16000,    // 16 kHz (required by Whisper)
+  channels: 1,          // Mono (single channel)
+  format: 'PCM',        // Pulse Code Modulation
+  bitDepth: 16          // 16-bit samples
+}
+```
+
+<Warning>
+Audio that doesn't meet these requirements will produce incorrect transcriptions or errors. Always convert audio to the correct format before transcription.
+</Warning>
+
+### Why These Requirements?
+
+**16 kHz Sample Rate:**
+- Whisper models were trained on 16 kHz audio
+- Higher sample rates (44.1 kHz, 48 kHz) are automatically downsampled by whisper.cpp
+- Lower sample rates may reduce transcription quality
+
+**Mono Channel:**
+- Whisper processes single-channel audio
+- Stereo audio is automatically mixed to mono by the native layer
+
+**16-bit PCM:**
+- Uncompressed linear PCM format
+- Each sample is a 16-bit signed integer (-32768 to 32767)
+
+## Supported Input Formats
+
+whisper.rn accepts audio in several formats, handled by the native audio utilities (`cpp/rn-audioutils.cpp`):
+
+### 1. WAV Files
+
+Standard WAV files with automatic format conversion:
+
+```typescript
+import { initWhisper } from 'whisper.rn'
+
+const context = await initWhisper({
+  filePath: require('../assets/model.bin'),
+})
+
+// WAV file (any sample rate, mono or stereo)
+const { promise } = context.transcribe(
+  'file:///path/to/audio.wav',
+  { language: 'en' }
+)
+```
+
+<Info>
+The native layer automatically:
+- Resamples to 16 kHz if needed
+- Converts stereo to mono
+- Converts to 16-bit PCM if needed
+</Info>
+
+### 2. Base64-Encoded WAV
+
+For network transfers or embedded audio:
+
+```typescript
+// Base64 WAV data must include the data URI prefix
+const base64Wav = 'data:audio/wav;base64,UklGRiQAAABXQVZF...'
+
+const { promise } = context.transcribe(base64Wav, {
+  language: 'en',
+})
+```
+
+### 3. Raw PCM Data (Base64)
+
+Base64-encoded **float32** PCM samples:
+
+```typescript
+// Float32 PCM samples (-1.0 to 1.0), mono, 16 kHz
+const base64Pcm = 'AAAAAAA...'
+
+const { promise } = context.transcribeData(base64Pcm, {
+  language: 'en',
+})
+```
+
+<Note>
+For `transcribeData()`, the base64 string represents **float32 samples** (not int16), where each sample is normalized to the range -1.0 to 1.0.
+</Note>
+
+### 4. ArrayBuffer (Fastest)
+
+Direct memory transfer using JSI bindings (`cpp/jsi/RNWhisperJSI.cpp`):
+
+```typescript
+// 16-bit PCM samples, mono, 16 kHz
+const audioBuffer: ArrayBuffer = new Int16Array([
+  // ... 16-bit PCM samples
+]).buffer
+
+const { promise } = context.transcribeData(audioBuffer, {
+  language: 'en',
+})
+```
+
+<Info>
+`ArrayBuffer` inputs bypass JSON serialization entirely (index.ts:402-405), providing the best performance for real-time or large audio processing.
+</Info>
+
+## Audio Format Conversion
+
+### Converting Audio Files
+
+Use `ffmpeg` to convert audio to the required format:
+
+```bash
+# Convert any audio file to 16kHz mono WAV
+ffmpeg -i input.mp3 -ar 16000 -ac 1 -sample_fmt s16 output.wav
+
+# From stereo to mono
+ffmpeg -i stereo.wav -ac 1 mono.wav
+
+# Resample to 16kHz
+ffmpeg -i input.wav -ar 16000 output.wav
+```
+
+### JavaScript Conversion
+
+For web-based or React Native apps:
+
+```typescript
+import RNFS from 'react-native-fs'
+import { Audio } from 'expo-av'
+
+// Record audio at correct settings
+const recording = new Audio.Recording()
+await recording.prepareToRecordAsync({
+  android: {
+    extension: '.wav',
+    outputFormat: Audio.RECORDING_OPTION_ANDROID_OUTPUT_FORMAT_DEFAULT,
+    audioEncoder: Audio.RECORDING_OPTION_ANDROID_AUDIO_ENCODER_DEFAULT,
+    sampleRate: 16000,
+    numberOfChannels: 1,
+    bitRate: 128000,
+  },
+  ios: {
+    extension: '.wav',
+    audioQuality: Audio.RECORDING_OPTION_IOS_AUDIO_QUALITY_HIGH,
+    sampleRate: 16000,
+    numberOfChannels: 1,
+    bitRate: 128000,
+    linearPCMBitDepth: 16,
+    linearPCMIsBigEndian: false,
+    linearPCMIsFloat: false,
+  },
+  web: {
+    mimeType: 'audio/wav',
+    bitsPerSecond: 128000,
+  },
+})
+
+await recording.startAsync()
+```
+
+### PCM Stream Processing
+
+For real-time audio streams:
+
+```typescript
+import AudioPcmStream from '@fugood/react-native-audio-pcm-stream'
+
+// Configure for 16kHz mono
+const stream = new AudioPcmStream({
+  sampleRate: 16000,
+  channels: 1,
+  bitsPerSample: 16,
+})
+
+stream.on('data', (data: Buffer) => {
+  // data contains Int16Array PCM samples
+  const int16Array = new Int16Array(data.buffer)
+  
+  // Convert to ArrayBuffer for transcription
+  const audioBuffer = int16Array.buffer
+  
+  context.transcribeData(audioBuffer, options)
+})
+```
+
+## Audio Format Validation
+
+### Checking WAV File Headers
+
+Validate WAV files before transcription:
+
+```typescript
+import RNFS from 'react-native-fs'
+
+async function validateWavFile(filePath: string) {
+  // Read first 44 bytes (WAV header)
+  const header = await RNFS.read(filePath, 44, 0, 'base64')
+  const buffer = Buffer.from(header, 'base64')
+  
+  // Check RIFF header
+  const riff = buffer.toString('ascii', 0, 4)
+  if (riff !== 'RIFF') {
+    throw new Error('Not a valid WAV file')
+  }
+  
+  // Check WAVE format
+  const wave = buffer.toString('ascii', 8, 12)
+  if (wave !== 'WAVE') {
+    throw new Error('Not a WAVE file')
+  }
+  
+  // Read audio format (offset 20, 2 bytes)
+  const audioFormat = buffer.readUInt16LE(20)
+  if (audioFormat !== 1) {
+    throw new Error('Not PCM format')
+  }
+  
+  // Read number of channels (offset 22, 2 bytes)
+  const channels = buffer.readUInt16LE(22)
+  
+  // Read sample rate (offset 24, 4 bytes)
+  const sampleRate = buffer.readUInt32LE(24)
+  
+  // Read bit depth (offset 34, 2 bytes)
+  const bitDepth = buffer.readUInt16LE(34)
+  
+  console.log('WAV Info:', {
+    channels,
+    sampleRate,
+    bitDepth,
+    isValid: channels <= 2 && sampleRate >= 8000 && bitDepth === 16,
+  })
+  
+  return { channels, sampleRate, bitDepth }
+}
+```
+
+### Runtime Format Detection
+
+```typescript
+function detectAudioFormat(filePath: string) {
+  const ext = filePath.split('.').pop()?.toLowerCase()
+  
+  switch (ext) {
+    case 'wav':
+      return 'wav'
+    case 'mp3':
+    case 'm4a':
+    case 'aac':
+      throw new Error(
+        `${ext} format not supported. Convert to WAV with: ` +
+        `ffmpeg -i input.${ext} -ar 16000 -ac 1 output.wav`
+      )
+    default:
+      throw new Error(`Unknown audio format: ${ext}`)
+  }
+}
+```
+
+## Memory Considerations
+
+### Audio Buffer Sizes
+
+Calculate memory usage for audio buffers:
+
+```typescript
+function calculateBufferSize(durationSec: number, sampleRate = 16000) {
+  const samples = durationSec * sampleRate
+  const bytes = samples * 2 // 16-bit = 2 bytes per sample
+  const mb = bytes / (1024 * 1024)
+  
+  return {
+    samples,
+    bytes,
+    mb: mb.toFixed(2),
+  }
+}
+
+// Examples:
+console.log('30 seconds:', calculateBufferSize(30))
+// { samples: 480000, bytes: 960000, mb: '0.92' }
+
+console.log('5 minutes:', calculateBufferSize(300))
+// { samples: 4800000, bytes: 9600000, mb: '9.16' }
+```
+
+<Warning>
+Large audio files consume significant memory. For files longer than 30 seconds, consider:
+- Using the `RealtimeTranscriber` with auto-slicing
+- Processing audio in chunks
+- Implementing a queue system
+</Warning>
+
+### Optimizing for Mobile
+
+```typescript
+const MAX_AUDIO_DURATION_SEC = 30
+const MAX_FILE_SIZE_MB = 10
+
+async function validateAudioSize(filePath: string) {
+  const stats = await RNFS.stat(filePath)
+  const sizeMB = stats.size / (1024 * 1024)
+  
+  if (sizeMB > MAX_FILE_SIZE_MB) {
+    throw new Error(
+      `Audio file too large: ${sizeMB.toFixed(2)} MB. ` +
+      `Maximum: ${MAX_FILE_SIZE_MB} MB`
+    )
+  }
+  
+  // Estimate duration (for 16kHz mono WAV)
+  const estimatedDuration = stats.size / (16000 * 2)
+  
+  if (estimatedDuration > MAX_AUDIO_DURATION_SEC) {
+    console.warn(
+      `Long audio detected: ~${estimatedDuration.toFixed(0)}s. ` +
+      'Consider using RealtimeTranscriber for better memory management.'
+    )
+  }
+}
+```
+
+## Common Audio Format Issues
+
+### Issue: Garbled Transcription
+
+**Cause:** Incorrect sample rate or channels
+
+**Solution:**
+```typescript
+// ❌ Wrong: Using 44.1kHz stereo audio directly
+const result = await context.transcribe('44100hz-stereo.wav').promise
+// Output: Garbled or nonsense text
+
+// ✅ Correct: Convert to 16kHz mono first
+// ffmpeg -i input.wav -ar 16000 -ac 1 output.wav
+const result = await context.transcribe('16000hz-mono.wav').promise
+```
+
+### Issue: Silent Audio / No Transcription
+
+**Cause:** Audio levels too low or format mismatch
+
+**Solution:**
+```typescript
+// Check audio amplitude
+function checkAudioLevel(samples: Int16Array) {
+  const maxAmplitude = Math.max(...samples.map(Math.abs))
+  const threshold = 1000 // Minimum amplitude
+  
+  if (maxAmplitude < threshold) {
+    console.warn(
+      `Audio level too low: ${maxAmplitude}. ` +
+      'Recording may be silent or gain too low.'
+    )
+  }
+}
+```
+
+### Issue: MP3/M4A Not Working
+
+**Cause:** Only WAV format is supported
+
+**Solution:**
+```typescript
+// Convert MP3 to WAV before transcription
+import { FFmpegKit } from 'ffmpeg-kit-react-native'
+
+async function convertToWav(inputPath: string, outputPath: string) {
+  const command = `-i ${inputPath} -ar 16000 -ac 1 -sample_fmt s16 ${outputPath}`
+  
+  const session = await FFmpegKit.execute(command)
+  const returnCode = await session.getReturnCode()
+  
+  if (returnCode.isValueSuccess()) {
+    console.log('Conversion successful')
+    return outputPath
+  } else {
+    throw new Error('Conversion failed')
+  }
+}
+```
+
+## Best Practices
+
+### 1. Record at Native Format
+
+Configure audio recording to use 16 kHz mono from the start:
+
+```typescript
+const recordingOptions = {
+  sampleRate: 16000,
+  numberOfChannels: 1,
+  bitRate: 128000,
+  linearPCMBitDepth: 16,
+}
+```
+
+### 2. Validate Before Processing
+
+```typescript
+async function transcribeWithValidation(
+  context: WhisperContext,
+  filePath: string,
+  options: TranscribeOptions
+) {
+  // Validate file exists
+  const exists = await RNFS.exists(filePath)
+  if (!exists) {
+    throw new Error('Audio file not found')
+  }
+  
+  // Validate format
+  detectAudioFormat(filePath)
+  
+  // Validate size
+  await validateAudioSize(filePath)
+  
+  // Transcribe
+  return context.transcribe(filePath, options)
+}
+```
+
+### 3. Use ArrayBuffer for Real-time
+
+For real-time transcription, use `ArrayBuffer` to avoid serialization overhead:
+
+```typescript
+// ❌ Slower: Base64 encoding
+const base64 = Buffer.from(pcmData).toString('base64')
+const result = await context.transcribeData(base64, options)
+
+// ✅ Faster: Direct ArrayBuffer
+const buffer = new Int16Array(pcmData).buffer
+const result = await context.transcribeData(buffer, options)
+```
+
+### 4. Chunk Long Audio
+
+For audio longer than 30 seconds, process in chunks:
+
+```typescript
+import { RealtimeTranscriber } from 'whisper.rn/realtime-transcription'
+
+const transcriber = new RealtimeTranscriber(
+  { whisperContext, audioStream, fs: RNFS },
+  {
+    audioSliceSec: 25,        // Process in 25-second chunks
+    maxSlicesInMemory: 3,     // Keep only 3 chunks in memory
+  },
+  {
+    onTranscribe: (event) => {
+      console.log('Chunk result:', event.data?.result)
+    },
+  }
+)
+```
+
+## Platform-Specific Notes
+
+### iOS
+
+- Audio session must be properly configured for recording
+- Use `AudioSessionIos` utilities for session management
+- Core Audio handles resampling automatically
+
+```typescript
+import { AudioSessionIos } from 'whisper.rn'
+
+await AudioSessionIos.setCategory(
+  AudioSessionIos.Category.PlayAndRecord,
+  [AudioSessionIos.CategoryOption.DefaultToSpeaker]
+)
+```
+
+### Android
+
+- Ensure `RECORD_AUDIO` permission is granted
+- MediaRecorder settings affect audio quality
+- Some devices may have hardware limitations on sample rates
+
+```typescript
+import { PermissionsAndroid } from 'react-native'
+
+const granted = await PermissionsAndroid.request(
+  PermissionsAndroid.PERMISSIONS.RECORD_AUDIO
+)
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Models" icon="brain" href="/core-concepts/models">
+    Learn about GGML models and quantization
+  </Card>
+  <Card title="Performance" icon="gauge-high" href="/core-concepts/performance">
+    Optimize transcription performance
+  </Card>
+</CardGroup>

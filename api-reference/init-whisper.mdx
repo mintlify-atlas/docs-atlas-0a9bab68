@@ -1,0 +1,215 @@
+---
+title: 'initWhisper'
+description: 'Initialize a Whisper context for speech-to-text transcription'
+---
+
+## Overview
+
+Initializes a Whisper context by loading a GGML model file. The context is required for all transcription operations.
+
+```typescript
+function initWhisper(options: ContextOptions): Promise<WhisperContext>
+```
+
+## Parameters
+
+<ParamField path="filePath" type="string | number" required>
+  Path to the GGML model file or a `require()` asset.
+  
+  **Supported formats:**
+  - Absolute file path: `'/path/to/ggml-model.bin'`
+  - Asset require: `require('../assets/ggml-tiny.en.bin')`
+  - `file://` URI (will be automatically normalized)
+  
+  <Warning>Remote URLs (http/https) are not supported. Download the model first.</Warning>
+</ParamField>
+
+<ParamField path="coreMLModelAsset" type="object">
+  Core ML model assets for iOS encoder acceleration (iOS 15.0+, tvOS 15.0+).
+  
+  <Expandable title="properties">
+    <ParamField path="filename" type="string" required>
+      The Core ML model directory name (e.g., `'ggml-tiny.en-encoder.mlmodelc'`)
+    </ParamField>
+    
+    <ParamField path="assets" type="Array<string | number>" required>
+      Array of Core ML asset files to bundle. Must include:
+      - `weights/weight.bin`
+      - `model.mil`
+      - `coremldata.bin`
+      
+      ```typescript
+      assets: [
+        require('../assets/ggml-tiny.en-encoder.mlmodelc/weights/weight.bin'),
+        require('../assets/ggml-tiny.en-encoder.mlmodelc/model.mil'),
+        require('../assets/ggml-tiny.en-encoder.mlmodelc/coremldata.bin'),
+      ]
+      ```
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="isBundleAsset" type="boolean" default="false">
+  Set to `true` if the file path is a bundled asset (when using string paths instead of `require()`).
+</ParamField>
+
+<ParamField path="useCoreMLIos" type="boolean" default="true">
+  Enable Core ML acceleration for the encoder on iOS. Set to `false` to disable even if Core ML model files exist.
+  
+  <Info>Core ML models must be co-located with the GGML model file.</Info>
+</ParamField>
+
+<ParamField path="useGpu" type="boolean" default="true">
+  Enable Metal GPU acceleration on iOS/tvOS. When enabled, Core ML option will be ignored.
+  
+  <Tip>GPU acceleration provides significant performance improvements on iOS devices.</Tip>
+</ParamField>
+
+<ParamField path="useFlashAttn" type="boolean" default="false">
+  Enable Flash Attention optimization. Only recommended if GPU is available.
+</ParamField>
+
+## Returns
+
+<ResponseField name="WhisperContext" type="WhisperContext">
+  A context instance for performing transcription operations.
+  
+  <Expandable title="properties">
+    <ResponseField name="id" type="number">
+      Unique identifier for this context
+    </ResponseField>
+    
+    <ResponseField name="ptr" type="number">
+      Native context pointer
+    </ResponseField>
+    
+    <ResponseField name="gpu" type="boolean">
+      Whether GPU/Metal acceleration is active
+    </ResponseField>
+    
+    <ResponseField name="reasonNoGPU" type="string">
+      Explanation if GPU is not available (empty string if GPU is active)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+## Example Usage
+
+### Basic Initialization
+
+```typescript
+import { initWhisper } from 'whisper.rn'
+
+const whisperContext = await initWhisper({
+  filePath: require('../assets/ggml-tiny.en.bin'),
+})
+
+console.log('Loaded model, ID:', whisperContext.id)
+console.log('GPU enabled:', whisperContext.gpu)
+```
+
+### Download and Initialize
+
+```typescript
+import { initWhisper } from 'whisper.rn'
+import RNFS from 'react-native-fs'
+
+// Download model
+const modelPath = `${RNFS.DocumentDirectoryPath}/ggml-base.bin`
+await RNFS.downloadFile({
+  fromUrl: 'https://example.com/ggml-base.bin',
+  toFile: modelPath,
+}).promise
+
+// Initialize context
+const whisperContext = await initWhisper({
+  filePath: modelPath,
+})
+```
+
+### With Core ML (iOS)
+
+```typescript
+import { initWhisper } from 'whisper.rn'
+import { Platform } from 'react-native'
+
+const whisperContext = await initWhisper({
+  filePath: require('../assets/ggml-tiny.en.bin'),
+  coreMLModelAsset: Platform.OS === 'ios' ? {
+    filename: 'ggml-tiny.en-encoder.mlmodelc',
+    assets: [
+      require('../assets/ggml-tiny.en-encoder.mlmodelc/weights/weight.bin'),
+      require('../assets/ggml-tiny.en-encoder.mlmodelc/model.mil'),
+      require('../assets/ggml-tiny.en-encoder.mlmodelc/coremldata.bin'),
+    ],
+  } : undefined,
+})
+```
+
+## Error Handling
+
+```typescript
+try {
+  const whisperContext = await initWhisper({
+    filePath: '/path/to/model.bin',
+  })
+} catch (error) {
+  if (error.message.includes('Invalid asset')) {
+    console.error('Model file not found')
+  } else if (error.message.includes('remote file is not supported')) {
+    console.error('Cannot load model from URL, download it first')
+  } else {
+    console.error('Failed to initialize Whisper:', error)
+  }
+}
+```
+
+## Platform-Specific Notes
+
+### iOS
+
+- For `medium` or `large` models, enable the [Extended Virtual Addressing](https://developer.apple.com/documentation/bundleresources/entitlements/com_apple_developer_kernel_extended-virtual-addressing) entitlement.
+- Pre-built `rnwhisper.xcframework` is used by default. Set `RNWHISPER_BUILD_FROM_SOURCE=1` in Podfile to build from source.
+
+### Android
+
+- Add proguard rule: `-keep class com.rnwhisper.** { *; }`
+- NDK version 24.0.8215888+ recommended for Apple Silicon Macs
+
+### Metro Configuration
+
+When using `require()` for model files, update `metro.config.js`:
+
+```javascript
+const defaultAssetExts = require('metro-config/src/defaults/defaults').assetExts
+
+module.exports = {
+  resolver: {
+    assetExts: [
+      ...defaultAssetExts,
+      'bin', // whisper.rn: ggml model binary
+      'mil', // whisper.rn: CoreML model asset
+    ],
+  },
+}
+```
+
+<Warning>
+  Using `require()` increases app size significantly. The RN packager does not support files larger than 2GB.
+</Warning>
+
+## Performance Tips
+
+- Use quantized models (q8, q5) for better mobile performance
+- Enable GPU acceleration with `useGpu: true` (default)
+- Test in Release mode for accurate performance measurement
+- Choose model size appropriate for your use case:
+  - `tiny`/`tiny.en`: Fastest, less accurate
+  - `base`/`base.en`: Good balance
+  - `small`: Better accuracy
+  - `medium`/`large`: Highest accuracy, requires more resources
+
+## See Also
+
+- [WhisperContext Methods](/api-reference/whisper-context) - Available transcription methods
+- [releaseAllWhisper()](/api-reference/release-functions) - Release all contexts

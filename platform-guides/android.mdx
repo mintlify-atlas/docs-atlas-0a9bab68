@@ -1,0 +1,309 @@
+---
+title: Android Setup
+description: Configure whisper.rn for Android including permissions and ProGuard
+---
+
+## Installation
+
+After installing the npm package, the Android native modules will be automatically linked via autolinking.
+
+```bash
+npm install whisper.rn
+```
+
+No additional setup is required for basic functionality.
+
+## ProGuard Configuration
+
+If ProGuard is enabled in your Android project (for release builds), you must add a keep rule to prevent whisper.rn classes from being minified.
+
+### Add ProGuard Rule
+
+Add this rule to `android/app/proguard-rules.pro`:
+
+```proguard
+# whisper.rn
+-keep class com.rnwhisper.** { *; }
+```
+
+This prevents ProGuard from obfuscating or removing whisper.rn's native classes, which would cause runtime crashes.
+
+### Verify ProGuard is Enabled
+
+Check your `android/app/build.gradle`:
+
+```gradle
+android {
+  buildTypes {
+    release {
+      minifyEnabled true  // ProGuard is enabled
+      proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
+    }
+  }
+}
+```
+
+<Warning>
+  Without the ProGuard rule, your app will crash in release builds when trying to use whisper.rn functions.
+</Warning>
+
+## Microphone Permissions
+
+To use realtime transcription features, you need to add microphone permissions and request them at runtime.
+
+### Add Permission to Manifest
+
+Add the `RECORD_AUDIO` permission to `android/app/src/main/AndroidManifest.xml`:
+
+```xml
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <!-- Add this line -->
+  <uses-permission android:name="android.permission.RECORD_AUDIO" />
+  
+  <application ...>
+    <!-- ... -->
+  </application>
+</manifest>
+```
+
+### Request Permission at Runtime
+
+Use React Native's `PermissionsAndroid` API to request the permission:
+
+```typescript
+import { PermissionsAndroid, Platform } from 'react-native'
+
+if (Platform.OS === 'android') {
+  const granted = await PermissionsAndroid.request(
+    PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
+    {
+      title: 'Microphone Permission',
+      message: 'This app needs access to your microphone to transcribe speech',
+      buttonNeutral: 'Ask Me Later',
+      buttonNegative: 'Cancel',
+      buttonPositive: 'OK',
+    }
+  )
+  
+  if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
+    console.log('Microphone permission denied')
+  }
+}
+```
+
+### Check Permission Status
+
+You can also check if the permission is already granted:
+
+```typescript
+const hasPermission = await PermissionsAndroid.check(
+  PermissionsAndroid.PERMISSIONS.RECORD_AUDIO
+)
+
+if (hasPermission) {
+  // Start recording/transcription
+} else {
+  // Request permission first
+}
+```
+
+## NDK Version
+
+For Apple Silicon Macs, it's recommended to use NDK version 24.0.8215888 or above to avoid build errors.
+
+### Set NDK Version
+
+In `android/build.gradle`, specify the NDK version:
+
+```gradle
+buildscript {
+  ext {
+    buildToolsVersion = "34.0.0"
+    minSdkVersion = 23
+    compileSdkVersion = 34
+    targetSdkVersion = 34
+    ndkVersion = "24.0.8215888"  // Add this line
+  }
+  // ...
+}
+```
+
+<Note>
+  If you encounter build errors on Apple Silicon Macs with messages like "unknown host CPU architecture: arm64", update your NDK version.
+</Note>
+
+## Architecture Support
+
+whisper.rn supports all common Android architectures:
+
+- `armeabi-v7a` (32-bit ARM)
+- `arm64-v8a` (64-bit ARM)
+- `x86` (32-bit Intel)
+- `x86_64` (64-bit Intel)
+
+The library automatically includes optimizations for `armv8.2-a+fp16` on supported devices.
+
+## 16KB Page Size Support
+
+whisper.rn supports Android 15+ devices with 16KB page sizes. No additional configuration is required.
+
+## GPU Acceleration
+
+Unlike iOS which uses Metal, Android doesn't currently have GPU acceleration for whisper.cpp. All processing runs on CPU.
+
+<Note>
+  GPU acceleration on Android may be added in future versions. For now, optimize performance by choosing appropriate model sizes and thread counts.
+</Note>
+
+## Build Configuration
+
+### New Architecture Support
+
+whisper.rn supports both the Old and New React Native architectures. The library will automatically detect which architecture you're using.
+
+To enable the New Architecture, follow the [React Native docs](https://reactnative.dev/docs/new-architecture-intro).
+
+### CMake Build
+
+The native C++ code is built using CMake. The configuration is handled automatically, but if you need to customize it, see `android/CMakeLists.txt` in the whisper.rn package.
+
+## Minimum SDK Version
+
+whisper.rn supports:
+
+- **Minimum SDK**: 23 (Android 6.0)
+- **Target SDK**: 34+ recommended
+
+## Release Build Optimization
+
+### Enable ProGuard
+
+For smaller APK size and better performance in release builds:
+
+```gradle
+android {
+  buildTypes {
+    release {
+      minifyEnabled true
+      shrinkResources true
+      proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+    }
+  }
+}
+```
+
+Remember to include the whisper.rn ProGuard rule mentioned earlier.
+
+### Split APKs by Architecture
+
+Reduce APK size by building separate APKs for each architecture:
+
+```gradle
+android {
+  splits {
+    abi {
+      enable true
+      reset()
+      include "armeabi-v7a", "arm64-v8a", "x86", "x86_64"
+      universalApk false
+    }
+  }
+}
+```
+
+## Performance Tips
+
+1. **Test in Release mode** - Debug builds are significantly slower
+2. **Use quantized models** - q8, q5 models are smaller and faster
+3. **Adjust thread count** - Default is optimized, but you can customize:
+   ```typescript
+   const whisperContext = await initWhisper({
+     filePath: 'path/to/model.bin',
+     maxThreads: 4, // Adjust based on device
+   })
+   ```
+4. **Choose appropriate model size** - tiny/base models work well on most Android devices
+
+## Common Build Issues
+
+### Unknown host CPU architecture on Apple Silicon
+
+**Error**: `unknown host CPU architecture: arm64`
+
+**Solution**: Update NDK version to 24.0.8215888 or higher
+
+```gradle
+ndkVersion = "24.0.8215888"
+```
+
+### ProGuard crashes in release
+
+**Error**: `ClassNotFoundException` or crashes when calling whisper.rn functions
+
+**Solution**: Add the ProGuard keep rule:
+
+```proguard
+-keep class com.rnwhisper.** { *; }
+```
+
+### JNI errors
+
+**Error**: `UnsatisfiedLinkError` or JNI-related crashes
+
+**Solution**: Clean and rebuild:
+
+```bash
+cd android
+./gradlew clean
+cd ..
+npx react-native run-android
+```
+
+### Out of memory
+
+**Error**: App crashes with large models
+
+**Solution**: Use quantized models or smaller model sizes. For very large models, consider:
+
+```gradle
+android {
+  defaultConfig {
+    // Increase heap size
+    javaMaxHeapSize "2g"
+  }
+}
+```
+
+## Testing
+
+### Debug Build
+
+```bash
+npx react-native run-android
+```
+
+### Release Build
+
+Test performance in release mode:
+
+```bash
+npx react-native run-android --mode release
+```
+
+<Warning>
+  Always test with release builds when evaluating performance. Debug builds can be 10x slower.
+</Warning>
+
+## React Native Versions
+
+whisper.rn is compatible with:
+
+- React Native 0.70+
+- Both Old and New Architecture
+- Expo (with prebuild)
+
+## Next Steps
+
+- [Basic Usage](/api-reference/core) - Learn how to transcribe audio
+- [Realtime Transcription](/api-reference/realtime) - Set up live transcription
+- [Voice Activity Detection](/api-reference/vad) - Detect speech segments
